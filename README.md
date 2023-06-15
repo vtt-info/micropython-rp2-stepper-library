@@ -54,6 +54,6 @@ These libs require a RPi Pico as they use PIOs.
 
 SSI encoder reading.
 
-## Pyboard dedicated libs
+## pyboard dedicated libs
 
-These libs require a Pyboard (v1.0 or v1.1) because they use the original LCD/touch shield.
+These libs require a pyboard (v1.0 or v1.1) because they use the original LCD/touch shield.
