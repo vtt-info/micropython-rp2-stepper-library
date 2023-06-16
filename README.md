@@ -18,7 +18,7 @@ Finite State Machine.
 
 Simple PID controller.
 
-## pys2x
+### pys2x
 
 PS2 gamepad python support.
 
@@ -62,26 +62,30 @@ _Work in progress_
 
 ## Untouched libs from other people
 
-## configParser
+### configParser
 
 Simple config parser.
 
-## dma
+### dma
 
 DMA management.
 
-## logging
+### logging
 
 Simple logging system.
 
-## rotary (RPi Pico, Pyboard, Esp)
+### mpr121
+
+Pyboard LCD + touch driver.
+
+### rotary (RPi Pico, Pyboard, Esp)
 
 Quadrature encoder handling.
 
-## ssd1306
+### ssd1306
 
 SSD1306-based OLED displays driver.
 
-## umidiparser
+### umidiparser
 
 MIDI file parser.
