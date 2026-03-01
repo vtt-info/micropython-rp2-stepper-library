@@ -9,15 +9,14 @@ TODO:
     x update position
     x use DMA class
     x move State Machine functions to dedicated module
-    - implement timeout
+    x implement timeout
     - implement error management -> status
-    - implement enable pin
+    x implement enable pin
     x centralize accel computations
     - dynamically compute NB_ACCEL_PTS (which criteria?)
-    - remove decel during stop?
-    
+
 BUGS:
-    - 
+    -
 """
 
 import time
@@ -50,11 +49,13 @@ class SmartStepper:
         if not isinstance(dirPin, machine.Pin):
             dirPin = machine.Pin(dirPin, machine.Pin.OUT)
 
-#         if enablePin != None and not isinstance(enablePin, machine.Pin):
-#             enablePin = machine.Pin(enablePin,machine.Pin.OUT)
-
         self._directionPin = dirPin
-#         self._enablePin = enablePin
+
+        if enablePin is not None and not isinstance(enablePin, machine.Pin):
+            enablePin = machine.Pin(enablePin, machine.Pin.OUT)
+        self._enablePin = enablePin
+        if self._enablePin is not None:
+            self._enablePin.high()  # active-low: start disabled
 
         self._stepsPerUnit = 1    # steps per unit
         self._minSpeed = 10       # minimum speed, in units per second
@@ -65,7 +66,8 @@ class SmartStepper:
         self._target = 0          # target position, in units
         self._direction = None    # current direction
         self._jogging = False     # True when in jog mode (no fixed target)
-        
+        self._moveDeadline = None # ticks_ms deadline for timeout, or None
+
         self._accelTable = []
         self._initAccelTable(accelCurve)
 
@@ -85,7 +87,7 @@ class SmartStepper:
         """
         if accelCurve == 'linear':
             return x
-        
+
         elif accelCurve == 'smooth1':
             return x * x * (3 - 2 * x)
 
@@ -94,7 +96,7 @@ class SmartStepper:
 
         elif accelCurve == 'sine':
             return (math.cos((x + 1) * math.pi) + 1) / 2
-        
+
         else:
             raise SmartStepperError(f"Unknown '{accelCurve}' acceleration curve")
 
@@ -181,56 +183,13 @@ class SmartStepper:
 
         return points
 
-#     def _decelPoints(self, maxSpeed):
-#         """ Compute deceleration points
-#         """
-#         points = []
-#         
-#         decelTime = (maxSpeed - self._minSpeed) / self._acceleration
-#         decelDist = (maxSpeed**2 - self._minSpeed**2) / (2 * self._acceleration)
-#         decelSteps = round(decelDist * self._stepsPerUnit)
-#         print(f"DEBUG::  maxSpeed={maxSpeed}, decelTime={decelTime}, decelSteps={decelSteps}")
-# 
-#         realSteps = 0
-#         dt = decelTime / NB_ACCEL_PTS
-#         for i in range(NB_ACCEL_PTS):
-#             y = self._accelTable[i]
-#             speed = self._minSpeed * y + maxSpeed * (1 - y)
-#             pulses = round(speed * self._stepsPerUnit * dt)
-#             if pulses:
-#                 points.append(speed * self._stepsPerUnit)
-#                 points.append(pulses)
-#             realSteps += pulses
-#         print(f"DEBUG::  real decelSteps={realSteps}")
-# 
-#         # Correction
-#         if realSteps < decelSteps:
-#             print("DEBUG::  correction pulses={}".format(decelSteps-realSteps))
-#             points.append(int(self._minSpeed * self._stepsPerUnit))
-#             points.append(decelSteps-realSteps)
-#             
-#         elif realSteps > decelSteps:
-#             raise RuntimeError("Overshoot!")
-#             
-# #         t = 0.
-# #         print(f" time   freq stps")
-# #         for j in range(0, len(points), 2):
-# #             freq = points[j]
-# #             steps = points[j+1]
-# #             print(f"{t:5.3f} {freq:6.1f} {steps:4d}")
-# #             t += steps / freq
-# 
-#         #print(f"  decelPoints={points}")
-#         
-#         return points
-
     def _updateDirection(self, direction):
         """ Update dir pin / pulseCounter according to direction
         """
         if direction == 'up':
             self._directionPin.high()
             self._pulseCounter.direction = 'up'
-            
+
         else:
             self._directionPin.low()
             self._pulseCounter.direction = 'down'
@@ -239,6 +198,22 @@ class SmartStepper:
 
         if self._reverse:
             self._directionPin.toggle()
+
+    def enable(self):
+        """ Enable the stepper driver (active-low enable pin).
+
+        No-op if no enable pin was configured.
+        """
+        if self._enablePin is not None:
+            self._enablePin.low()
+
+    def disable(self):
+        """ Disable the stepper driver (active-low enable pin).
+
+        No-op if no enable pin was configured.
+        """
+        if self._enablePin is not None:
+            self._enablePin.high()
 
     @property
     def minSpeed(self):
@@ -401,11 +376,12 @@ class SmartStepper:
 
         if maxSpeed is None:
             maxSpeed = self._maxSpeed
-            
+
         elif not self._minSpeed <= maxSpeed <= self._maxSpeed:
             raise SmartStepperError("'maxSpeed' is out of range")
 
         self._jogging = True
+        self.enable()
         self._updateDirection(direction)
 
         points = []
@@ -416,30 +392,31 @@ class SmartStepper:
         # Constant speed
 #         print("\nDEBUG::Constant speed phase:")
         maxDist = 60 * maxSpeed  # distance for 1min run
-#         points.extend(self._constSpeedPoints(maxSpeed, maxDist))
         points.append((maxSpeed * self._stepsPerUnit, round(maxDist * self._stepsPerUnit)))
- 
-#         # Deceleration (used when stopped)
-#         print("\nDEBUG::Deceleration phase")
-#         accelPoints.reverse()
-#         points.extend(accelPoints)
 
         # Start the generator
         self._pulseGenerator.start(points)
 
-    def moveTo(self, target, relative=False):
+    def moveTo(self, target, relative=False, timeout=None):
         """ Move to target
 
         target is in units.
+        timeout is in seconds (None = no timeout).
         Handle acceleration.
         Non blocking.
         """
 #         print("\nTRACE::moveTo()")
-        
+
         if self.moving:
             raise SmartStepperError("Can't 'moveto' while moving")
 
         self._jogging = False
+        self.enable()
+
+        if timeout is not None:
+            self._moveDeadline = time.ticks_add(time.ticks_ms(), round(timeout * 1000))
+        else:
+            self._moveDeadline = None
 
         if not relative:
             self._target = target
@@ -449,20 +426,22 @@ class SmartStepper:
         # Compute direction
         if self._target > self.position:
             self._updateDirection('up')
-            
+
         else:
             self._updateDirection('down')
-        
+
         remaining = abs(self._target - self.position)
         points = self._buildProfile(self._minSpeed, remaining)
 
         # Start the generator
         self._pulseGenerator.start(points)
 
-    def stop(self):
-        """ Stop the motor
+    def stop(self, emergency=False):
+        """ Stop the motor.
 
-        Use deceleration unless emergency is True.
+        With emergency=False (default), decelerates smoothly from the current
+        speed to minSpeed, then halts. Non-blocking.
+        With emergency=True, stops immediately (hard stop, may lose steps).
         """
 #         print("\nTRACE::stop()")
 
@@ -470,7 +449,16 @@ class SmartStepper:
             raise SmartStepperError("Can't 'stop' while not moving")
 
         self._jogging = False
-        self._pulseGenerator.stop()
+        self._moveDeadline = None
+
+        if emergency:
+            self._pulseGenerator.stop()
+        else:
+            points = self._accelPoints(self.speed, self._minSpeed)
+            if points:
+                self._pulseGenerator.update(points)
+            else:
+                self._pulseGenerator.stop()
 
     def _replan(self):
         """ Recompute and update the motion profile from the current state.
@@ -487,20 +475,36 @@ class SmartStepper:
         remaining = self._target - self.position
 
         if abs(remaining) < 1.0 / self._stepsPerUnit:
-            self._pulseGenerator.stop()
+            self._pulseGenerator.stop()  # less than 1 step left: hard stop is fine
             return
 
         points = self._buildProfile(currentSpeed, remaining)
         if points:
             self._pulseGenerator.update(points)
         else:
-            self._pulseGenerator.stop()
+            self._pulseGenerator.stop()  # already at or past target: hard stop
+
+    @property
+    def timedOut(self):
+        """ True if the current move has exceeded its timeout.
+
+        Always False when no timeout was set.
+        """
+        if self._moveDeadline is None:
+            return False
+        return time.ticks_diff(time.ticks_ms(), self._moveDeadline) >= 0
 
     def waitEndOfMove(self):
-        """
+        """ Block until the move completes or times out.
+
+        Raises SmartStepperError if a timeout was set and expires.
         """
         while self.moving:
+            if self.timedOut:
+                self.stop(emergency=True)
+                raise SmartStepperError("Move timed out")
             time.sleep_ms(1)
+        self._moveDeadline = None
 
 
 def jog(stepper):
@@ -539,7 +543,7 @@ def moveTo(stepper):
     t = time.ticks_ms()
     while (time.ticks_ms() - t < 1500):
         time.sleep(0.1)
-        
+
     stepper.stop()
 
     while stepper.moving:
@@ -583,20 +587,20 @@ def debug(stepper):
     t = time.ticks_ms()
     stepper.moveTo(50)
     print("\nINFO::starting with target: {:.1f}mm / {:d}steps".format(stepper.target, round(stepper.target*stepper.stepsPerUnit)))
-    
+
     while not stepper.moving:
         time.sleep_ms(1)
     print("INFO::Moving...")
-    
+
 #     print("  time  speed     pos")
     while stepper.moving:
 #         print("{:6.3f} {:+6.1f} {:+7.1f}".format((time.ticks_ms()-t)/1000, stepper.speed, stepper.position))
-# 
+#
 #         if time.ticks_ms()-t >= 5000:
 #             stepper.stop()
 #             while stepper.moving:
 #                 print("{:6.3f} {:+6.1f} {:+7.1f}".format((time.ticks_ms()-t)/1000, stepper.speed, stepper.position))
-        
+
         time.sleep_ms(1)
 
     print("\nINFO::done: pulse counter: {:.1f}mm / {:d}steps".format(stepper.position, stepper._pulseCounter.value))
