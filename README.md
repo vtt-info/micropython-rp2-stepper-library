@@ -27,6 +27,83 @@ CPU-independent pulse generation and position counting.
 | `pulseCounter.py` | PIO-based pulse counter for position tracking (internal) |
 | `test_smartStepper.py` | Manual tests and usage examples |
 
+Test scripts are in `tests/`:
+
+| File | Description |
+| --- | --- |
+| `tests/test_config.py` | Pin assignments for all Pico-side test scripts |
+| `tests/test_smartStepper.py` | Manual test / demo for `SmartStepper` |
+| `tests/test_pulseGenerator.py` | Manual test / demo for `PulseGenerator` |
+| `tests/test_pulseCounter.py` | Manual test / demo for `PulseCounter` |
+| `tests/hil_moveto.py` | Pico-side script used by the HIL test suite |
+| `tests/hil_config.py` | HIL wiring / port configuration |
+| `tests/test_hil.py` | Host-side hardware-in-the-loop test runner |
+
+## Testing
+
+### Manual tests (run on the Pico)
+
+Each module has a standalone demo script. Deploy the library and the test
+script, then run it:
+
+```sh
+# SmartStepper demo
+mpremote connect /dev/cu.usbmodem1 cp smartStepper.py pulseGenerator.py pulseCounter.py tests/test_config.py tests/test_smartStepper.py :
+mpremote connect /dev/cu.usbmodem1 run tests/test_smartStepper.py
+
+# PulseGenerator demo
+mpremote connect /dev/cu.usbmodem1 cp pulseGenerator.py tests/test_config.py tests/test_pulseGenerator.py :
+mpremote connect /dev/cu.usbmodem1 run tests/test_pulseGenerator.py
+
+# PulseCounter demo
+mpremote connect /dev/cu.usbmodem1 cp pulseCounter.py tests/test_config.py tests/test_pulseCounter.py :
+mpremote connect /dev/cu.usbmodem1 run tests/test_pulseCounter.py
+```
+
+Adjust the port (`/dev/cu.usbmodem1`) and pin numbers in `tests/test_config.py`
+to match your hardware.
+
+### Hardware-in-the-loop (HIL) tests
+
+The HIL suite runs on the host PC. It deploys scripts to the Pico via
+`mpremote`, captures the step and direction signals with a
+[Saleae Logic analyzer](https://www.saleae.com/), and asserts correctness
+against the raw edge data.
+
+**Prerequisites:**
+
+- [Logic 2](https://www.saleae.com/downloads/) open with Automation enabled
+  (Settings → Automation, port 10430)
+- Saleae channels wired to the Pico per `tests/hil_config.py`
+- Pico connected via USB
+- Python package: `pip install logic2-automation`
+
+**Configuration:**
+
+Edit `tests/hil_config.py` to match your wiring and USB port:
+
+```python
+STEP_CHANNEL = 0      # Saleae ch 0  →  Pico GPIO 13
+DIR_CHANNEL  = 1      # Saleae ch 1  →  Pico GPIO 14
+STEP_PIN     = 13     # Pico GPIO for step signal
+PICO_PORT    = '/dev/cu.usbmodem314201'
+```
+
+**Run:**
+
+```sh
+python tests/test_hil.py
+```
+
+**Tests:**
+
+| Test | What it checks |
+| --- | --- |
+| `test_pulse_generator` | `PulseGenerator` timing: edge count and inter-pulse gaps for a two-speed sequence |
+| `test_moveto_pulse_count` | `moveTo(50)` produces the expected step count; Saleae edge count matches on-board `PulseCounter` |
+| `test_accel_profile` | Step frequency is monotonically increasing at the start and decreasing at the end of a move |
+| `test_replan_profile` | Mid-move `maxSpeed` change triggers `_replan()`; verifies the step frequency drops from the fast cruise speed to the new lower speed |
+
 ## Usage
 
 ### Basic setup
@@ -226,14 +303,14 @@ SmartStepper(stepPin, dirPin, enablePin=None, accelCurve='smooth2')
 
 ## Credits
 
-Original library by **Frédéric** (fma@gbiloba.org) (2023), 
-posted at [https://framagit.org/fma38/micropython-lib](https://framagit.org/fma38/micropython-lib), and licensed under the
+Original library by **Frédéric** (<fma@gbiloba.org>) (2023),
+posted at [framagit.org/fma38/micropython-lib](https://framagit.org/fma38/micropython-lib), and licensed under the
 [GNU Affero General Public License v3](LICENSE).
 
 `pulseCounter.py` is based on original work by
 [Dave Hylands](https://github.com/dhylands/upy-examples/blob/master/pico/pio_pulse_counter.py).
 
-### Changes by Ned Konz (ned@metamagix.tech) (2026)
+### Changes by Ned Konz (<ned@metamagix.tech>) (2026)
 
 - Fixed garbage-collector bug in `pulseGenerator.py`: DMA sequence array is
   now pinned as an instance variable to prevent it from being collected while

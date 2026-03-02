@@ -5,9 +5,15 @@ Prerequisites:
   - Saleae wired to Pico per hil_config.py
   - Pico connected via USB
 
-Run:
-  python test_hil.py
+Run from the repo root or from tests/:
+  python tests/test_hil.py
 """
+
+import os
+
+# Set these BEFORE importing grpc
+os.environ["GRPC_VERBOSITY"] = "NONE" # Stops almost all gRPC internal logging
+os.environ["GRPC_TRACE"] = ""         # Ensures no specific tracing is active
 
 import csv
 import subprocess
@@ -17,18 +23,25 @@ from pathlib import Path
 
 import saleae.automation as saleae
 
+# Allow running from repo root or from tests/
+sys.path.insert(0, str(Path(__file__).parent))
 import hil_config
 
 # ---------------------------------------------------------------------------
 # Infrastructure
 # ---------------------------------------------------------------------------
 
+_TESTS_DIR = Path(__file__).parent
+_LIB_DIR   = _TESTS_DIR.parent
+
+# Library files live in the repo root; Pico-side test scripts live in tests/.
 PICO_FILES = [
-    'smartStepper.py',
-    'pulseGenerator.py',
-    'pulseCounter.py',
-    'test_config.py',
-    'hil_moveto.py',
+    str(_LIB_DIR  / 'smartStepper.py'),
+    str(_LIB_DIR  / 'pulseGenerator.py'),
+    str(_LIB_DIR  / 'pulseCounter.py'),
+    str(_TESTS_DIR / 'test_config.py'),
+    str(_TESTS_DIR / 'hil_moveto.py'),
+    str(_TESTS_DIR / 'hil_replan.py'),
 ]
 
 
@@ -39,6 +52,11 @@ def _mpremote(*args):
     return result.stdout + result.stderr, result.returncode
 
 
+def _force_step_low():
+    """Drive the step pin LOW on the Pico via mpremote exec."""
+    _mpremote('exec', f'import machine; machine.Pin({hil_config.STEP_PIN}, machine.Pin.OUT, value=0)')
+
+
 def deploy():
     """Copy library and HIL scripts to the Pico."""
     print('  Deploying files to Pico...')
@@ -47,16 +65,21 @@ def deploy():
         raise RuntimeError(f'deploy failed:\n{stdout}')
 
 
-def parse_rising_edges(digital_csv: Path, channel: int) -> list:
-    """Return list of timestamps (s) for rising edges on the given Saleae channel."""
+def parse_rising_edges(digital_csv: Path, channel: int, min_time: float = 0.0) -> list:
+    """Return list of timestamps (s) for rising edges on the given Saleae channel.
+
+    min_time: skip edges before this many seconds into the capture, to ignore
+    startup transients that occur before the Pico script begins executing.
+    """
     col = f'Channel {channel}'
     edges = []
     prev = None
     with open(digital_csv, newline='') as f:
         for row in csv.DictReader(f):
+            t = float(row['Time [s]'])
             val = int(row[col])
-            if prev == 0 and val == 1:
-                edges.append(float(row['Time [s]']))
+            if t >= min_time and prev == 0 and val == 1:
+                edges.append(t)
             prev = val
     return edges
 
@@ -72,16 +95,19 @@ def run_capture(manager: saleae.Manager, script: str, channels: list):
     dev_cfg = saleae.LogicDeviceConfiguration(
         enabled_digital_channels=channels,
         digital_sample_rate=hil_config.DIGITAL_SAMPLE_RATE,
+        digital_threshold_volts=3.3
     )
     cap_cfg = saleae.CaptureConfiguration(
         capture_mode=saleae.ManualCaptureMode()
     )
 
+    _force_step_low()
     cap = manager.start_capture(device_configuration=dev_cfg,
                                 capture_configuration=cap_cfg)
     try:
-        stdout, rc = _mpremote('run', script)
+        stdout, rc = _mpremote('run', str(_TESTS_DIR / script))
         cap.stop()
+        _force_step_low()
         if rc != 0:
             raise RuntimeError(f'mpremote run {script} failed:\n{stdout}')
         cap.export_raw_data_csv(str(tmpdir), digital_channels=channels)
@@ -97,8 +123,8 @@ def run_capture(manager: saleae.Manager, script: str, channels: list):
 
 def test_pulse_generator(manager: saleae.Manager):
     """
-    PulseGenerator points=((1,3),(5,5)) → 8 pulses (±1 for profile rounding).
-    First 2 inter-pulse gaps ~1 s (1 Hz); last 5 gaps ~0.2 s (5 Hz).
+    PulseGenerator points=((1,3),(5,5)) → 8 pulses.
+    Gaps 0-2 ~1 s (1 Hz + transition); gaps 3-6 ~0.2 s (5 Hz).
     """
     channels = [hil_config.STEP_CHANNEL]
     tmpdir, _ = run_capture(manager, 'test_pulseGenerator.py', channels)
@@ -106,14 +132,16 @@ def test_pulse_generator(manager: saleae.Manager):
     edges = parse_rising_edges(tmpdir / 'digital.csv', hil_config.STEP_CHANNEL)
     assert abs(len(edges) - 8) <= 1, f'Expected 8 pulses (±1), got {len(edges)}'
 
-    # Use the last 8 edges (skip any leading spurious edge from PIO init)
-    edges = edges[-8:]
+    # Use the first 8 edges (skip any trailing spurious edge from Pico soft-reset)
+    edges = edges[:8]
     gaps = [edges[i + 1] - edges[i] for i in range(len(edges) - 1)]
-    # Gaps 0-1: ~1 Hz
-    for i in range(2):
+    # Gaps 0-2: ~1 s (two 1 Hz inter-pulse gaps + one transition gap; the PIO
+    # completes the final 1 Hz LOW half-period before starting the 5 Hz segment,
+    # so the gap from the 3rd rising edge to the 1st 5 Hz rising edge = 1 full period)
+    for i in range(3):
         assert 0.8 < gaps[i] < 1.25, f'Gap {i} expected ~1 s, got {gaps[i]:.3f} s'
-    # Gaps 2-6: ~5 Hz (0.2 s)
-    for i in range(2, 7):
+    # Gaps 3-6: ~5 Hz (0.2 s)
+    for i in range(3, 7):
         assert 0.15 < gaps[i] < 0.28, f'Gap {i} expected ~0.2 s, got {gaps[i]:.3f} s'
 
     print(f'  PASS  test_pulse_generator  ({len(edges)} pulses, timing OK)')
@@ -175,6 +203,38 @@ def test_accel_profile(manager: saleae.Manager):
     print(f'  PASS  test_accel_profile  (peak {peak_hz:.0f} Hz, accel/decel ramps OK)')
 
 
+def test_replan_profile(manager: saleae.Manager):
+    """
+    moveTo(100) at maxSpeed=50 (4800 Hz); after 1 s mid-cruise, maxSpeed is
+    lowered to 25 (2400 Hz), triggering _replan().
+
+    Checks that:
+      - The first 20% of steps cruise near 4800 Hz (fast phase).
+      - The last 20% of steps cruise near 2400 Hz (slow phase after replan).
+    """
+    channels = [hil_config.STEP_CHANNEL]
+    tmpdir, _ = run_capture(manager, 'hil_replan.py', channels)
+
+    edges = parse_rising_edges(tmpdir / 'digital.csv', hil_config.STEP_CHANNEL)
+    assert len(edges) > 200, f'Too few pulses to check replan ({len(edges)})'
+
+    freqs = [1.0 / (edges[i + 1] - edges[i]) for i in range(len(edges) - 1)]
+    n = len(freqs) // 5  # 20 % window
+
+    # First 20 %: must be in the fast cruise phase (maxSpeed=50 → ~4800 Hz)
+    peak_fast = max(freqs[:n])
+    assert peak_fast > 4000, \
+        f'Fast phase peak {peak_fast:.0f} Hz, expected >4000 (maxSpeed=50)'
+
+    # Last 20 %: must be in the slow phase after replan (maxSpeed=25 → ~2400 Hz)
+    peak_slow = max(freqs[-n:])
+    assert peak_slow < 3000, \
+        f'Slow phase peak {peak_slow:.0f} Hz, expected <3000 after replan to maxSpeed=25'
+
+    print(f'  PASS  test_replan_profile  '
+          f'(fast peak {peak_fast:.0f} Hz → slow peak {peak_slow:.0f} Hz)')
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -183,6 +243,7 @@ TESTS = [
     test_pulse_generator,
     test_moveto_pulse_count,
     test_accel_profile,
+    test_replan_profile,
 ]
 
 

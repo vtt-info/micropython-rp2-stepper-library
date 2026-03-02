@@ -10,15 +10,29 @@ MicroPython library for smooth, non-blocking stepper motor control on the RP2040
 
 ## Running / testing
 
-There is no build system or automated test runner. All testing is manual, deployed to hardware:
+Test scripts live in `tests/`. There is no automated test runner — all tests are deployed to hardware manually or via the HIL suite.
 
-- `test_smartStepper.py` — demo/manual test script; run `main()` on the Pico via REPL or `mpremote run test_smartStepper.py`
-- `pulseGenerator.py` and `pulseCounter.py` each have a `main()` at the bottom for standalone testing
+**Manual tests (Pico-side):**
 
-To deploy files to a Pico:
+- `tests/test_smartStepper.py` — SmartStepper demo; run via `mpremote run`
+- `tests/test_pulseGenerator.py` — PulseGenerator standalone demo
+- `tests/test_pulseCounter.py` — PulseCounter standalone demo
+- `tests/test_config.py` — shared pin assignments (`STEP_PIN`, `DIR_PIN`, `ENABLE_PIN`)
+
+To deploy and run:
 ```
-mpremote cp smartStepper.py pulseGenerator.py pulseCounter.py :
-mpremote run test_smartStepper.py
+mpremote cp smartStepper.py pulseGenerator.py pulseCounter.py tests/test_config.py tests/test_smartStepper.py :
+mpremote run tests/test_smartStepper.py
+```
+
+**Hardware-in-the-loop (HIL) tests (host-side, requires Saleae Logic 2):**
+
+- `tests/test_hil.py` — host runner; deploys to Pico, captures signals, asserts correctness
+- `tests/hil_config.py` — wiring and port config (edit to match hardware)
+- `tests/hil_moveto.py` — Pico-side script executed by the HIL suite
+
+```
+python tests/test_hil.py
 ```
 
 ## Architecture

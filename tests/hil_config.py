@@ -5,6 +5,7 @@
 # Connect Logic channels to Pico GPIO pins as listed below.
 STEP_CHANNEL = 0    # Saleae ch 0  →  Pico GPIO 13 (STEP_PIN)
 DIR_CHANNEL = 1     # Saleae ch 1  →  Pico GPIO 14 (DIR_PIN)
+STEP_PIN = 13       # Pico GPIO for step signal
 
 # --- Saleae capture settings ---
 DIGITAL_SAMPLE_RATE = 12_500_000   # 12.5 MHz; handles step pulses up to ~1 MHz
