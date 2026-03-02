@@ -3,13 +3,12 @@
 """ SmartStepper manual tests / demo.
 
 Run on an RP2040 board (Raspberry Pi Pico).
-Adjust pin numbers and motion parameters in main() to match your hardware.
+Adjust pin numbers in test_config.py to match your hardware.
 """
 
 import time
-import machine
-
 import smartStepper
+from test_config import STEP_PIN, DIR_PIN, ENABLE_PIN
 
 
 def jog(stepper):
@@ -119,7 +118,7 @@ def main():
     """
     """
     print("TRACE::main()")
-    stepper = smartStepper.SmartStepper(27, 26, accelCurve='smooth2')
+    stepper = smartStepper.SmartStepper(STEP_PIN, DIR_PIN, ENABLE_PIN, accelCurve='smooth2')
     stepper.stepsPerUnit = 96.
     stepper.minSpeed = 1
     stepper.maxSpeed = 50

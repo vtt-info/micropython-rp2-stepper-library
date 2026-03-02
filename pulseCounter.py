@@ -118,30 +118,3 @@ class PulseCounter:
         # Start the StateMachine
         self._sm.active(1)
 
-
-def main():
-    """
-    """
-    stepPin = machine.Pin(2, machine.Pin.OUT)
-    stepPin.low()
-    
-    counter = PulseCounter(stepPin)
-    print(counter.value)
-    
-    counter.value = 1000
-    for i in range(10):
-        stepPin.high()
-        stepPin.low()
-    print(counter.value)
-    
-    counter.direction = 'down'
-    for i in range(100):
-        stepPin.high()
-        stepPin.low()
-    print(counter.value)
-
-
-if __name__ == "__main__":
-    main()
-    
-    

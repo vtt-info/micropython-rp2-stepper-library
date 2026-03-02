@@ -103,8 +103,8 @@ The enable pin is driven automatically when a move starts. You can also
 control it manually:
 
 ```python
-stepper.disable()   # de-energise coils (reduce heat / allow manual movement)
-stepper.enable()    # re-energise coils
+stepper.disable()   # de-energize coils (reduce heat / allow manual movement)
+stepper.enable()    # re-energize coils
 ```
 
 ### Dynamic parameter changes mid-move
@@ -239,7 +239,7 @@ posted at [https://framagit.org/fma38/micropython-lib](https://framagit.org/fma3
   now pinned as an instance variable to prevent it from being collected while
   DMA is active.
 - Added `PulseGenerator.update()` for non-blocking mid-run DMA replacement.
-- Generalised `_accelPoints()` to handle both acceleration and deceleration
+- Generalized `_accelPoints()` to handle both acceleration and deceleration
   (reversal of a symmetric smoothstep curve), replacing the separate
   `_decelPoints()` method.
 - Added `_buildProfile()` unified motion planner used by `moveTo()` and
@@ -262,5 +262,5 @@ posted at [https://framagit.org/fma38/micropython-lib](https://framagit.org/fma3
   `pack_ctrl()` / `config()` API, drops `import uctypes` (array passed
   directly via buffer protocol), and is inherently RP2350-compatible.
 - Extracted test/demo code into `test_smartStepper.py`.
-- Added `homing.py`: async two-phase homing with configurable sensor polarity,
+- Added `homing.py`: async three-phase homing with configurable sensor polarity,
   speed parameters, and timeout.

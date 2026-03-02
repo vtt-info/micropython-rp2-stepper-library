@@ -3,9 +3,7 @@
 """ Pulse generator.
 """
 
-import time
 import array
-import machine
 import rp2
 
 SM_FREQ = 10_000_000  # Hz
@@ -174,27 +172,3 @@ class PulseGenerator:
 
         self._pulseLength = 0  # needed?
 
-
-def main():
-    """
-    """
-    pulseGenerator = PulseGenerator(machine.Pin(25, machine.Pin.OUT))
-    points = ((1, 3), (5, 5))
-    pulseGenerator.start(points)
-
-    t = time.ticks_ms()
-    print("freq TX FIFO")
-    while pulseGenerator.freq:
-        print("{:04d} {:02d}".format(pulseGenerator.freq, pulseGenerator._sm.tx_fifo()))
-
-        if time.ticks_ms()-t > 9991200:
-            pulseGenerator.stop()
-            break
-
-        time.sleep(0.25)
-
-    print("{:04d} {:02d}".format(pulseGenerator.freq, pulseGenerator._sm.tx_fifo()))
-
-
-if __name__ == "__main__":
-    main()
