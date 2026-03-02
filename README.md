@@ -34,7 +34,7 @@ Or from the host via mpremote:
 mpremote mip install github:bikeNomad/micropython-rp2-smartStepper
 ```
 
-This installs `smartStepper.py`, `pulseGenerator.py`, `pulseCounter.py`, and `homing.py`.
+This installs the `smartstepper` package into `/lib/smartstepper/` on the Pico.
 
 ### Host-side test tools
 
@@ -46,12 +46,15 @@ This installs `logic2-automation` and `mpremote`, which are required to run the 
 
 ## Files
 
+Library files are in `smartstepper/` (installed as a package on the Pico):
+
 | File | Description |
 | --- | --- |
-| `smartStepper.py` | High-level `SmartStepper` class |
-| `homing.py` | Async homing routine (three-phase, handles pre-asserted sensor) |
-| `pulseGenerator.py` | PIO + DMA pulse generator (internal) |
-| `pulseCounter.py` | PIO-based pulse counter for position tracking (internal) |
+| `smartstepper/__init__.py` | Package entry point; re-exports `SmartStepper`, `SmartStepperError` |
+| `smartstepper/smartStepper.py` | High-level `SmartStepper` class |
+| `smartstepper/homing.py` | Async homing routine (three-phase, handles pre-asserted sensor) |
+| `smartstepper/pulseGenerator.py` | PIO + DMA pulse generator (internal) |
+| `smartstepper/pulseCounter.py` | PIO-based pulse counter for position tracking (internal) |
 | `package.json` | MicroPython `mip` package descriptor |
 | `pyproject.toml` | Host-side test tool dependencies (`pip install -e .`) |
 
@@ -75,17 +78,19 @@ Each module has a standalone demo script. Deploy the library and the test
 script, then run it:
 
 ```sh
+PORT=/dev/cu.usbmodem1
+
 # SmartStepper demo
-mpremote connect /dev/cu.usbmodem1 cp smartStepper.py pulseGenerator.py pulseCounter.py tests/test_config.py tests/test_smartStepper.py :
-mpremote connect /dev/cu.usbmodem1 run tests/test_smartStepper.py
+mpremote connect $PORT cp -r smartstepper/ : + cp tests/test_config.py tests/test_smartStepper.py :
+mpremote connect $PORT run tests/test_smartStepper.py
 
 # PulseGenerator demo
-mpremote connect /dev/cu.usbmodem1 cp pulseGenerator.py tests/test_config.py tests/test_pulseGenerator.py :
-mpremote connect /dev/cu.usbmodem1 run tests/test_pulseGenerator.py
+mpremote connect $PORT cp -r smartstepper/ : + cp tests/test_config.py tests/test_pulseGenerator.py :
+mpremote connect $PORT run tests/test_pulseGenerator.py
 
 # PulseCounter demo
-mpremote connect /dev/cu.usbmodem1 cp pulseCounter.py tests/test_config.py tests/test_pulseCounter.py :
-mpremote connect /dev/cu.usbmodem1 run tests/test_pulseCounter.py
+mpremote connect $PORT cp -r smartstepper/ : + cp tests/test_config.py tests/test_pulseCounter.py :
+mpremote connect $PORT run tests/test_pulseCounter.py
 ```
 
 Adjust the port (`/dev/cu.usbmodem1`) and pin numbers in `tests/test_config.py`
@@ -137,9 +142,9 @@ python tests/test_hil.py
 ### Basic setup
 
 ```python
-import smartStepper
+from smartstepper import SmartStepper
 
-stepper = smartStepper.SmartStepper(
+stepper = SmartStepper(
     stepPin=27,       # step pulse output pin number (or machine.Pin)
     dirPin=26,        # direction output pin number (or machine.Pin)
     enablePin=25,     # optional active-low enable pin (or None)
@@ -175,10 +180,12 @@ stepper.waitEndOfMove()
 ### Move with timeout
 
 ```python
+from smartstepper import SmartStepper, SmartStepperError
+
 try:
     stepper.moveTo(200, timeout=5.0)   # fail if not done in 5 seconds
     stepper.waitEndOfMove()
-except smartStepper.SmartStepperError as e:
+except SmartStepperError as e:
     print("Error:", e)   # "Move timed out" if motor stalled
 ```
 
@@ -258,7 +265,7 @@ home (`position = 0`).
 
 ```python
 import asyncio
-import homing
+from smartstepper import homing
 
 sensor = machine.Pin(15, machine.Pin.IN, machine.Pin.PULL_UP)
 

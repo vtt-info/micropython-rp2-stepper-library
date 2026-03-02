@@ -7,7 +7,7 @@ Adjust pin numbers in test_config.py to match your hardware.
 """
 
 import time
-import smartStepper
+from smartstepper import smartStepper
 from test_config import STEP_PIN, DIR_PIN, ENABLE_PIN
 
 

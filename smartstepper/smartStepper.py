@@ -23,8 +23,8 @@ import time
 import math
 import machine
 
-import pulseGenerator
-import pulseCounter
+from . import pulseGenerator
+from . import pulseCounter
 
 NB_ACCEL_PTS = 100
 

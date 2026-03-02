@@ -7,7 +7,7 @@ Adjust pin number to match your hardware.
 """
 
 import machine
-import pulseCounter
+from smartstepper import pulseCounter
 from test_config import STEP_PIN
 
 

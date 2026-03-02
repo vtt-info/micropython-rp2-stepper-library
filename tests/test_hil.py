@@ -31,14 +31,12 @@ import hil_config
 # Infrastructure
 # ---------------------------------------------------------------------------
 
-_TESTS_DIR = Path(__file__).parent
-_LIB_DIR   = _TESTS_DIR.parent
+_TESTS_DIR    = Path(__file__).parent
+_LIB_DIR      = _TESTS_DIR.parent
+_PACKAGE_DIR  = _LIB_DIR / 'smartstepper'
 
-# Library files live in the repo root; Pico-side test scripts live in tests/.
-PICO_FILES = [
-    str(_LIB_DIR  / 'smartStepper.py'),
-    str(_LIB_DIR  / 'pulseGenerator.py'),
-    str(_LIB_DIR  / 'pulseCounter.py'),
+# Pico-side test helper scripts (deployed to the Pico root).
+PICO_TEST_FILES = [
     str(_TESTS_DIR / 'test_config.py'),
     str(_TESTS_DIR / 'hil_moveto.py'),
     str(_TESTS_DIR / 'hil_replan.py'),
@@ -58,11 +56,16 @@ def _force_step_low():
 
 
 def deploy():
-    """Copy library and HIL scripts to the Pico."""
+    """Copy the smartstepper package and HIL scripts to the Pico."""
     print('  Deploying files to Pico...')
-    stdout, rc = _mpremote('cp', *PICO_FILES, ':')
+    # Deploy the package directory recursively (creates smartstepper/ on the Pico).
+    stdout, rc = _mpremote('cp', '-r', str(_PACKAGE_DIR) + '/', ':')
     if rc != 0:
-        raise RuntimeError(f'deploy failed:\n{stdout}')
+        raise RuntimeError(f'deploy (package) failed:\n{stdout}')
+    # Deploy test helper scripts to the Pico root.
+    stdout, rc = _mpremote('cp', *PICO_TEST_FILES, ':')
+    if rc != 0:
+        raise RuntimeError(f'deploy (test scripts) failed:\n{stdout}')
 
 
 def parse_rising_edges(digital_csv: Path, channel: int, min_time: float = 0.0) -> list:

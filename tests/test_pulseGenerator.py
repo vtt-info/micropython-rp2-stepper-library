@@ -8,7 +8,7 @@ Adjust pin number and points to match your hardware.
 
 import time
 import machine
-import pulseGenerator
+from smartstepper import pulseGenerator
 from test_config import STEP_PIN
 
 

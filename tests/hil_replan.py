@@ -6,7 +6,7 @@ Prints the PulseCounter step total on completion.
 """
 
 import time
-import smartStepper
+from smartstepper import smartStepper
 from test_config import STEP_PIN, DIR_PIN, ENABLE_PIN
 
 s = smartStepper.SmartStepper(STEP_PIN, DIR_PIN, ENABLE_PIN)

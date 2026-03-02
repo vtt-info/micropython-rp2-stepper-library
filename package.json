@@ -1,9 +1,10 @@
 {
     "urls": [
-        ["smartStepper.py",   "github:bikeNomad/micropython-rp2-smartStepper/smartStepper.py"],
-        ["pulseGenerator.py", "github:bikeNomad/micropython-rp2-smartStepper/pulseGenerator.py"],
-        ["pulseCounter.py",   "github:bikeNomad/micropython-rp2-smartStepper/pulseCounter.py"],
-        ["homing.py",         "github:bikeNomad/micropython-rp2-smartStepper/homing.py"]
+        ["smartstepper/__init__.py",     "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/__init__.py"],
+        ["smartstepper/smartStepper.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/smartStepper.py"],
+        ["smartstepper/pulseGenerator.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/pulseGenerator.py"],
+        ["smartstepper/pulseCounter.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/pulseCounter.py"],
+        ["smartstepper/homing.py",       "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/homing.py"]
     ],
     "deps": []
 }
