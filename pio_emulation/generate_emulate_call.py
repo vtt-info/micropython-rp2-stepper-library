@@ -1,6 +1,20 @@
+"""
+This is to be run on the target machine to print the call to emulate()
+with parameters extracted from the PIO program tuple.
+Example usage:
+
+```
+import generate_emulate_call
+import smartstepper
+pgm = smartstepper.pulseGenerator.PulseGenerator._pioCode
+generate_emulate_call.print_emulate_call(pgm)
+```
+"""
+
 from collections import namedtuple
 from array import array
 from uctypes import struct as ustruct, addressof, BFUINT32, BF_POS, BF_LEN, LITTLE_ENDIAN
+
 
 # see ports/rp2/modules/rp2.py
 

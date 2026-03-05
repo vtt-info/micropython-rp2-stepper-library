@@ -16,9 +16,9 @@ os.environ["GRPC_VERBOSITY"] = "NONE" # Stops almost all gRPC internal logging
 os.environ["GRPC_TRACE"] = ""         # Ensures no specific tracing is active
 
 import csv
+import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import saleae.automation as saleae
@@ -34,6 +34,7 @@ import hil_config
 _TESTS_DIR    = Path(__file__).parent
 _LIB_DIR      = _TESTS_DIR.parent
 _PACKAGE_DIR  = _LIB_DIR / 'smartstepper'
+_CAPTURES_DIR = _TESTS_DIR / 'captures'
 
 # Pico-side test helper scripts (deployed to the Pico root).
 PICO_TEST_FILES = [
@@ -58,8 +59,8 @@ def _force_step_low():
 def deploy():
     """Copy the smartstepper package and HIL scripts to the Pico."""
     print('  Deploying files to Pico...')
-    # Deploy the package directory recursively (creates smartstepper/ on the Pico).
-    stdout, rc = _mpremote('cp', '-r', str(_PACKAGE_DIR) + '/', ':')
+    # Deploy the package directory recursively (creates lib/smartstepper/ on the Pico).
+    stdout, rc = _mpremote('cp', '-r', str(_PACKAGE_DIR) + '/', ':/lib')
     if rc != 0:
         raise RuntimeError(f'deploy (package) failed:\n{stdout}')
     # Deploy test helper scripts to the Pico root.
@@ -94,7 +95,8 @@ def run_capture(manager: saleae.Manager, script: str, channels: list):
     Returns (tmpdir Path, mpremote stdout string).
     Raises RuntimeError if the Pico script exits non-zero.
     """
-    tmpdir = Path(tempfile.mkdtemp())
+    tmpdir = _CAPTURES_DIR / script.replace('.py', '')
+    tmpdir.mkdir(parents=True, exist_ok=True)
     dev_cfg = saleae.LogicDeviceConfiguration(
         enabled_digital_channels=channels,
         digital_sample_rate=hil_config.DIGITAL_SAMPLE_RATE,
@@ -251,6 +253,10 @@ TESTS = [
 
 
 def main():
+    if _CAPTURES_DIR.exists():
+        shutil.rmtree(_CAPTURES_DIR)
+    _CAPTURES_DIR.mkdir()
+
     deploy()
 
     print('Connecting to Logic 2...')

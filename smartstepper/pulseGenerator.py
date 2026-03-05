@@ -5,6 +5,7 @@
 
 import array
 import rp2
+import machine
 
 SM_FREQ = 10_000_000  # Hz
 
@@ -56,35 +57,37 @@ class PulseGenerator:
         # fmt: off
         # Get input values (pulseLength, nbPulses)
         # Blocking
-        pull().side(0)          # pull pulseLength from TX FIFO to OSR; set output LOW
-        mov(x, osr)             # store pulseLength to X
+        label("top")
+
+        pull(block).side(0)     # 0 pull pulseLength from TX FIFO to OSR; set output LOW
+        mov(x, osr)             # 1 store pulseLength to X
 
         # Update freq
-        mov(isr, x)             # store pulseLength to ISR
-        push()                  # push back pulseLength in RX FIFO and clear ISR
-        irq(noblock, rel(0))    # notify ARM a new pulseLength is available
+        mov(isr, x)             # 2 store pulseLength to ISR
+        push(noblock)           # 3 push back pulseLength in RX FIFO and clear ISR
+        irq(rel(0))             # 4 notify ARM a new pulseLength is available
 
         # Cancel if pulseLength is 0
-        mov(y, osr)             # store pulseLength to Y
-        pull()                  # pull nbPulses from TX FIFO to OSR
-        jmp(not_y, "end")       # jump to 'end' if Y is zero (pulseLength = 0 → end-of-sequence sentinel)
-        mov(y, osr)             # store nbPulses to Y
-        mov(osr, x)             # store back pulseLength to OSR
+        mov(y, osr)             # 5 store pulseLength to Y
+        pull(block)             # 6 pull nbPulses from TX FIFO to OSR
+        jmp(not_y, "top")       # 7 jump to 'top' if Y is zero (pulseLength = 0 → end-of-sequence sentinel)
+        mov(y, osr)             # 8 store nbPulses to Y
+        mov(osr, x)             # 9 store back pulseLength to OSR
 
         # Start pulsing (square)
         label("start")
 
-        mov(x, osr).side(1)     # put previously saved pulseLength to counter; set output HIGH
+        mov(x, osr).side(1)     # 10 put previously saved pulseLength to counter; set output HIGH
         label("loopHigh")
-        jmp(x_dec, "loopHigh")  # loop if pulseLength is non 0; decrement pulseLength counter in all cases
+        jmp(x_dec, "loopHigh")  # 11 loop if pulseLength is non 0; decrement pulseLength counter in all cases
 
-        mov(x, osr).side(0)     # put previously saved pulseLength to counter; set output LOW
+        mov(x, osr).side(0)     # 12 put previously saved pulseLength to counter; set output LOW
         label("loopLow")
-        jmp(x_dec, "loopLow")   # loop if pulseLength is non 0; decrement pulseLength counter in all cases
+        jmp(x_dec, "loopLow")   # 13 loop if pulseLength is non 0; decrement pulseLength counter in all cases
 
-        jmp(y_dec, "start")     # loop if nbPulses is non 0; decrement nbPulses counter in all cases
+        jmp(y_dec, "start")     # 14 loop if nbPulses is non 0; decrement nbPulses counter in all cases
 
-        label("end")
+        wrap()                  # loop to 'top'
         # fmt: on
 
     def _pulseLengthISR(self, smId):
@@ -171,3 +174,9 @@ class PulseGenerator:
 
         self._pulseLength = 0  # needed?
 
+
+    @property
+    def dma_count(self):
+        """ Return the number of DMA transfers currently in progress.
+        """
+        return self._dma.count
