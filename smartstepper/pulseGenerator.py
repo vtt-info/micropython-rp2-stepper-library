@@ -91,9 +91,25 @@ class PulseGenerator:
         # fmt: on
 
     def _pulseLengthISR(self, smId):
+        """Drain the full RX FIFO and keep the most recent pulseLength.
+
+        MicroPython coalesces multiple PIO IRQ events into a single handler
+        call. Without draining, the FIFO can fill (max 4 entries) while the
+        sentinel push(noblock) silently drops its value, leaving _pulseLength
+        non-zero forever. Draining all entries on each call prevents overflow
+        and ensures the sentinel 0 is always captured.
         """
+        while self._sm.rx_fifo() > 0:
+            self._pulseLength = self._sm.get()
+
+    @property
+    def moving(self):
+        """True while DMA is actively transferring (i.e. the motor is running).
+
+        Uses the hardware DMA busy bit rather than the ISR-updated _pulseLength,
+        so it is reliable even when MicroPython coalesces soft-IRQ deliveries.
         """
-        self._pulseLength = self._sm.get()
+        return self._dma.active()
 
     @property
     def freq(self):
@@ -112,13 +128,15 @@ class PulseGenerator:
         """
         sequence = array.array('I')
         for freq, nbPulses in points:
+            if nbPulses < 1:  # guard: 0-pulse segments wrap to 0xFFFFFFFF → 2³² steps
+                continue
             sequence.append(round(SM_FREQ / freq / 2))
             sequence.append(nbPulses - 1)
         sequence.extend(array.array('I', (0, 0)))
         return sequence
 
-    def _startDMA(self, sequence):
-        """ Configure and trigger DMA for the given sequence array.
+    def _configureDMA(self, sequence):
+        """ Configure DMA for the given sequence array without triggering.
 
         Saves sequence as self._sequence to prevent GC from reclaiming it
         while DMA is active. The array is passed directly as the read source;
@@ -136,8 +154,45 @@ class PulseGenerator:
             write=_PIO0_TXF_ADDR[self._smNum],
             count=len(sequence),
             ctrl=ctrl,
-            trigger=True,
+            trigger=False,
         )
+
+    def _triggerDMA(self):
+        """ Fire a previously configured DMA channel. """
+        self._dma.active(True)
+
+    def _startDMA(self, sequence):
+        """ Configure and immediately trigger DMA for the given sequence array. """
+        self._configureDMA(sequence)
+        self._triggerDMA()
+
+    @property
+    def dma_channel(self):
+        """ Return the integer DMA channel number (0–11). """
+        return self._dma.channel
+
+    @staticmethod
+    def trigger_channels(bitmask):
+        """ Simultaneously trigger multiple DMA channels.
+
+        bitmask is a bitfield where bit N corresponds to DMA channel N.
+        Uses the RP2040/RP2350 DMA_MULTI_CHAN_TRIGGER register (single AHB
+        write) for hardware-guaranteed simultaneous start.
+        """
+        machine.mem32[0x50000430] = bitmask
+
+    def prepare(self, points):
+        """ Configure DMA for the given points without triggering.
+
+        Stops any prior DMA and programs the new sequence so that a subsequent
+        call to _triggerDMA() (or trigger_channels()) will start it instantly.
+        For multi-axis use: call prepare() on each axis, then fire all channels
+        simultaneously via trigger_channels(bitmask).
+
+        points contains n tuples (freq, nbPulses) values.
+        """
+        self._dma.active(False)  # stop any prior DMA
+        self._configureDMA(self._buildSequence(points))
 
     def start(self, points):
         """

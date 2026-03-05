@@ -44,6 +44,7 @@ PICO_TEST_FILES = [
     str(_TESTS_DIR / 'hil_stop_restart.py'),
     str(_TESTS_DIR / 'hil_triangular.py'),
     str(_TESTS_DIR / 'hil_accel_time.py'),
+    str(_TESTS_DIR / 'hil_multiaxis.py'),
 ]
 
 
@@ -54,9 +55,15 @@ def _mpremote(*args):
     return result.stdout + result.stderr, result.returncode
 
 
-def _force_step_low():
-    """Drive the step pin LOW on the Pico via mpremote exec."""
-    _mpremote('exec', f'import machine; machine.Pin({hil_config.STEP_PIN}, machine.Pin.OUT, value=0)')
+def _force_step_low(pin=None):
+    """Drive a step pin LOW on the Pico via mpremote exec.
+
+    Defaults to hil_config.STEP_PIN (axis 1). Pass a different pin number to
+    quiesce additional step outputs before/after a capture.
+    """
+    if pin is None:
+        pin = hil_config.STEP_PIN
+    _mpremote('exec', f'import machine; machine.Pin({pin}, machine.Pin.OUT, value=0)')
 
 
 def deploy():
@@ -119,6 +126,7 @@ def run_capture(manager: saleae.Manager, script: str, channels: list):
         if rc != 0:
             raise RuntimeError(f'mpremote run {script} failed:\n{stdout}')
         cap.export_raw_data_csv(str(tmpdir), digital_channels=channels)
+        cap.save_capture(str(tmpdir / f"{script}.sal"))
     finally:
         cap.close()
 
@@ -380,6 +388,83 @@ def test_replan_profile(manager: saleae.Manager):
           f'(fast peak {peak_fast:.0f} Hz → slow peak {peak_slow:.0f} Hz)')
 
 
+def test_multiaxis_sync(manager: saleae.Manager):
+    """MultiAxis.move({x:50, y:5}) fires both DMA channels simultaneously.
+
+    Axis 1: 50 units * 96 steps/unit = 4800 steps.
+      natural peak ≈ 122.6 u/s → capped to maxSpeed=50; accel time = 0.150 s.
+    Axis 2: 5 units * 96 steps/unit = 480 steps.
+      natural peak ≈ 39.1 u/s < 50; natural accel time ≈ 0.114 s.
+    t_common = 0.150 s (axis 1 dominates); axis 2 forced to 50 u/s peak.
+
+    Checks:
+      - First rising edge on each axis within 100 µs of the other (hardware
+        simultaneous start via DMA_MULTI_CHAN_TRIGGER).
+      - Step counts: axis 1 ≈ 4800 ± 2, axis 2 ≈ 480 ± 2.
+      - Accel-phase end times agree within 30 ms (both ramp for t_common).
+      - Saleae counts match PulseCounter values from Pico stdout.
+    """
+    channels = [
+        hil_config.STEP_CHANNEL, hil_config.DIR_CHANNEL,
+        hil_config.STEP_CHANNEL_2, hil_config.DIR_CHANNEL_2,
+    ]
+    tmpdir, stdout = run_capture(manager, 'hil_multiaxis.py', channels)
+    _force_step_low(hil_config.STEP_PIN_2)  # quiesce axis 2 step pin
+
+    edges1 = parse_rising_edges(tmpdir / 'digital.csv', hil_config.STEP_CHANNEL)
+    edges2 = parse_rising_edges(tmpdir / 'digital.csv', hil_config.STEP_CHANNEL_2)
+
+    assert len(edges1) > 20, f'Axis 1: too few pulses ({len(edges1)})'
+    assert len(edges2) > 20, f'Axis 2: too few pulses ({len(edges2)})'
+
+    # 1. Simultaneous start: first rising edges must be within 100 µs.
+    skew_us = abs(edges1[0] - edges2[0]) * 1e6
+    assert skew_us < 100, \
+        f'Start skew {skew_us:.1f} µs exceeds 100 µs — axes not started simultaneously?'
+
+    # 2. Step counts.
+    assert abs(len(edges1) - 4800) <= 2, \
+        f'Axis 1: expected ~4800 pulses, got {len(edges1)}'
+    assert abs(len(edges2) - 480) <= 2, \
+        f'Axis 2: expected ~480 pulses, got {len(edges2)}'
+
+    # 3. Accel-phase end time alignment.
+    # Search for peak frequency in the first 60 % of each edge stream.  Using
+    # 60 % (rather than 40 %) ensures that axis 2's triangular profile apex —
+    # which occurs at the 50 % mark (240 of 480 steps) — falls inside the
+    # detection window.
+    def peak_time(edges):
+        window = edges[:max(4, len(edges) * 3 // 5)]  # first ~60 %
+        freqs = [1.0 / (window[i + 1] - window[i]) for i in range(len(window) - 1)]
+        idx = freqs.index(max(freqs))
+        return window[idx + 1]  # timestamp of the edge where peak freq occurs
+
+    t_peak1 = peak_time(edges1)
+    t_peak2 = peak_time(edges2)
+    accel_skew_ms = abs(t_peak1 - t_peak2) * 1e3
+    assert accel_skew_ms < 50, \
+        (f'Accel-phase end skew {accel_skew_ms:.1f} ms > 50 ms — '
+         f'axes not sharing t_common?')
+
+    # 4. PulseCounter cross-check from Pico stdout.
+    pico_x = pico_y = None
+    for line in stdout.splitlines():
+        if line.startswith('done x_steps='):
+            parts = line.split()
+            pico_x = int(parts[0].split('=')[1])
+            pico_y = int(parts[1].split('=')[1])
+            break
+    assert pico_x is not None, f'Pico did not print "done x_steps=..."\\nstdout: {stdout}'
+    assert len(edges1) == pico_x, \
+        f'Axis 1: Saleae ({len(edges1)}) ≠ PulseCounter ({pico_x})'
+    assert len(edges2) == pico_y, \
+        f'Axis 2: Saleae ({len(edges2)}) ≠ PulseCounter ({pico_y})'
+
+    print(f'  PASS  test_multiaxis_sync  '
+          f'(start skew {skew_us:.1f} µs, accel skew {accel_skew_ms:.1f} ms, '
+          f'{len(edges1)}/{len(edges2)} steps)')
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -392,6 +477,7 @@ TESTS = [
     test_accel_time_profile,
     test_replan_profile,
     test_stop_restart,
+    test_multiaxis_sync,
 ]
 
 

@@ -16,6 +16,7 @@ CPU-independent pulse generation and position counting.
 - Active-low enable pin support (auto-enabled on move start)
 - Move timeout with automatic emergency stop
 - Up to 4 simultaneous stepper instances (limited by RP2040 PIO state machines)
+- Multi-axis synchronized motion (`Axis` + `MultiAxis`): hardware-simultaneous DMA start via a single register write
 
 ## Installation
 
@@ -50,8 +51,10 @@ Library files are in `smartstepper/` (installed as a package on the Pico):
 
 | File | Description |
 | --- | --- |
-| `smartstepper/__init__.py` | Package entry point; re-exports `SmartStepper`, `SmartStepperError` |
+| `smartstepper/__init__.py` | Package entry point; re-exports `SmartStepper`, `SmartStepperError`, `Axis`, `AxisError`, `MultiAxis` |
 | `smartstepper/smartStepper.py` | High-level `SmartStepper` class |
+| `smartstepper/axis.py` | `Axis` wrapper with hard speed/acceleration limits; supports deferred DMA start |
+| `smartstepper/multiaxis.py` | `MultiAxis` synchronized multi-axis planner |
 | `smartstepper/homing.py` | Async homing routine (three-phase, handles pre-asserted sensor) |
 | `smartstepper/pulseGenerator.py` | PIO + DMA pulse generator (internal) |
 | `smartstepper/pulseCounter.py` | PIO-based pulse counter for position tracking (internal) |
@@ -208,6 +211,60 @@ stepper.waitEndOfMove()
 This is primarily used for multi-axis synchronization: compute the longest
 acceleration time across all axes, then give every axis the same `accel_time`
 so all acceleration phases take identical durations.
+
+### Multi-axis synchronized moves
+
+`Axis` wraps a `SmartStepper` and adds hard speed/acceleration limits that
+cannot be exceeded even when properties are changed at runtime. `MultiAxis`
+plans a coordinated move across any number of axes so that every axis
+completes its acceleration phase at the same instant, then uses a single
+hardware register write to start all DMA channels simultaneously.
+
+```python
+import asyncio
+from smartstepper import SmartStepper, Axis, MultiAxis
+
+stepper_x = SmartStepper(stepPin=2, dirPin=3, enablePin=4)
+stepper_x.stepsPerUnit = 96
+stepper_x.minSpeed = 2
+stepper_x.maxSpeed = 100
+stepper_x.acceleration = 400
+
+stepper_y = SmartStepper(stepPin=5, dirPin=6, enablePin=7)
+stepper_y.stepsPerUnit = 96
+stepper_y.minSpeed = 2
+stepper_y.maxSpeed = 80      # Y axis is slower
+stepper_y.acceleration = 300
+
+x = Axis(stepper_x, hard_max_speed=100, hard_max_accel=400)
+y = Axis(stepper_y, hard_max_speed=80,  hard_max_accel=300)
+
+ma = MultiAxis([x, y])
+
+async def main():
+    # Both axes start their accel phase simultaneously and finish it
+    # at the same time, then cruise and decel independently.
+    ma.move({x: 100, y: 50})
+    await ma.wait_done()
+
+asyncio.run(main())
+```
+
+`MultiAxis.move()` computes the natural triangular peak speed for each
+axis and derives its acceleration time. The longest of these becomes the
+common accel time; every axis is given that same `accel_time` so their
+ramps finish together. The move is then started with a single write to
+the RP2040/RP2350 `DMA_MULTI_CHAN_TRIGGER` register — a hardware guarantee
+of simultaneous start within the same AHB bus cycle.
+
+You can also use `Axis` standalone with a deferred start:
+
+```python
+ch_x = x.prepare_move(100)
+ch_y = y.prepare_move(50)
+# ... set up other things ...
+x.start_move()   # fires only x; use MultiAxis for simultaneous start
+```
 
 ### Move with timeout
 
@@ -386,6 +443,64 @@ SmartStepper(stepPin, dirPin, enablePin=None, accelCurve='smooth2')
 | `waitEndOfMove()` | Block until stopped; raises on timeout |
 | `enable()` | Assert enable pin (active-low) |
 | `disable()` | Release enable pin |
+
+### Axis
+
+```python
+Axis(stepper, hard_max_speed=None, hard_max_accel=None)
+```
+
+Wraps a `SmartStepper`. `hard_max_speed` and `hard_max_accel` are immutable
+after construction (default to the stepper's current `maxSpeed` /
+`acceleration`). `AxisError` is raised if a property setter or motion method
+would exceed these limits.
+
+| Property | Writable | Description |
+| --- | --- | --- |
+| `hard_max_speed` | no | Immutable upper bound on `maxSpeed` |
+| `hard_max_accel` | no | Immutable upper bound on `acceleration` |
+| `stepper` | no | The underlying `SmartStepper` |
+| `position` | yes (stopped) | Delegates to `stepper.position` |
+| `speed` | no | Delegates to `stepper.speed` |
+| `moving` | no | Delegates to `stepper.moving` |
+| `target` | no | Delegates to `stepper.target` |
+| `minSpeed` | yes | Delegates to `stepper.minSpeed` |
+| `maxSpeed` | yes | Validated against `hard_max_speed`; raises `AxisError` if exceeded |
+| `acceleration` | yes | Validated against `hard_max_accel`; raises `AxisError` if exceeded |
+| `stepsPerUnit` | yes (stopped) | Delegates to `stepper.stepsPerUnit` |
+| `reverse` | yes (stopped) | Delegates to `stepper.reverse` |
+
+| Method | Description |
+| --- | --- |
+| `prepare_move(target, relative=False, accel_time=None, triangular=False)` | Configure DMA without starting; returns DMA channel number |
+| `start_move()` | Trigger a previously prepared move (single-axis deferred start) |
+| `moveTo(target, relative=False, timeout=None, triangular=False, accel_time=None)` | Immediate move (validates hard limits first) |
+| `stop(emergency=False)` | Delegates to `stepper.stop()` |
+| `enable()` / `disable()` | Delegates to `stepper.enable()` / `disable()` |
+| `async wait_done()` | Async wait until this axis finishes moving |
+
+### MultiAxis
+
+```python
+MultiAxis(axes)
+```
+
+`axes` is a list of `Axis` objects.
+
+| Method | Description |
+| --- | --- |
+| `move(targets)` | Synchronized move; `targets` is a `{axis: position}` dict or a list parallel to the axes |
+| `async wait_done()` | Async wait until all axes finish moving |
+| `stop(emergency=False)` | Stop all moving axes |
+
+`move()` algorithm:
+
+1. For each axis, compute the natural triangular accel time over its distance
+   (clamped to `hard_max_speed`).
+2. `t_common = max(all accel times)`.
+3. Call `axis.prepare_move(target, accel_time=t_common)` for each axis.
+4. Write a DMA channel bitmask to `DMA_MULTI_CHAN_TRIGGER` — a single AHB
+   write that starts all channels in the same bus cycle.
 
 ## Hardware notes
 

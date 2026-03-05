@@ -172,6 +172,12 @@ class SmartStepper:
 
         if forced_peak is not None:
             peakSpeed = min(forced_peak, self._maxSpeed)
+            accelUpDist = (peakSpeed**2 - fromSpeed**2) / (2 * accel)
+            decelDist   = (peakSpeed**2 - self._minSpeed**2) / (2 * accel)
+            if accelUpDist + decelDist > abs(remaining):
+                peakSpeed = math.sqrt(
+                    (abs(remaining) * 2 * accel + fromSpeed**2 + self._minSpeed**2) / 2
+                )
         else:
             # Peak speed achievable given remaining distance starting at fromSpeed.
             # Derived from: accelUpDist + decelDist = |remaining|
@@ -203,9 +209,9 @@ class SmartStepper:
             accelUpDist = (peakSpeed**2 - fromSpeed**2) / (2 * accel)
             decelDist   = (peakSpeed**2 - self._minSpeed**2) / (2 * accel)
             constDist   = abs(remaining) - accelUpDist - decelDist
-            if constDist > 0:
-                points.append((peakSpeed * self._stepsPerUnit,
-                               round(constDist * self._stepsPerUnit)))
+            constSteps  = round(constDist * self._stepsPerUnit)
+            if constSteps > 0:
+                points.append((peakSpeed * self._stepsPerUnit, constSteps))
 
         # Decel phase: peakSpeed → minSpeed
         points.extend(self._accelPoints(peakSpeed, self._minSpeed, accel=accel))
@@ -389,7 +395,7 @@ class SmartStepper:
     def moving(self):
         """ Check if moving
         """
-        return self.speed != 0
+        return self._pulseGenerator.moving
 
     def jog(self, maxSpeed=None, direction='up'):
         """ Jog at given speed
@@ -479,6 +485,46 @@ class SmartStepper:
 
         # Start the generator
         self._pulseGenerator.start(points)
+
+    def _prepare_move(self, target, relative=False, accel_time=None, triangular=False):
+        """ Set up a move and configure DMA without triggering it.
+
+        Identical to moveTo() except the pulse generator is primed via
+        prepare() rather than start(). Call pulseGenerator._triggerDMA() (or
+        PulseGenerator.trigger_channels()) to start the motor afterwards.
+
+        Returns the DMA channel number for bitmask construction.
+        """
+        if self.moving:
+            raise SmartStepperError("Can't prepare move while moving")
+
+        self._jogging = False
+        self.enable()
+        self._moveDeadline = None
+
+        if not relative:
+            self._target = target
+        else:
+            self._target = self.position + target
+
+        if self._target > self.position:
+            self._updateDirection('up')
+        else:
+            self._updateDirection('down')
+
+        remaining = abs(self._target - self.position)
+
+        forced_peak = None
+        if accel_time is not None:
+            forced_peak = self._minSpeed + self._acceleration * accel_time
+            forced_peak = min(forced_peak, self._maxSpeed)
+            if forced_peak < self._minSpeed:
+                raise SmartStepperError("accel_time too short: peak speed below minSpeed")
+
+        points = self._buildProfile(self._minSpeed, remaining,
+                                    triangular=triangular, forced_peak=forced_peak)
+        self._pulseGenerator.prepare(points)
+        return self._pulseGenerator.dma_channel
 
     def stop(self, emergency=False):
         """ Stop the motor.
