@@ -45,6 +45,7 @@ PICO_TEST_FILES = [
     str(_TESTS_DIR / 'hil_triangular.py'),
     str(_TESTS_DIR / 'hil_accel_time.py'),
     str(_TESTS_DIR / 'hil_multiaxis.py'),
+    str(_TESTS_DIR / 'hil_arc.py'),
 ]
 
 
@@ -461,6 +462,98 @@ def test_multiaxis_sync(manager: saleae.Manager):
           f'{len(edges1)}/{len(edges2)} steps)')
 
 
+def test_arc_quarter_circle(manager: saleae.Manager):
+    """Arc.move() — quarter-circle CCW (G03) from (0,0) to (100,100), center (0,100).
+
+    Geometry:
+      stepsPerUnit=100, chord_tol=0.15 → 15 segments
+      X: 0→100 monotonically (DIR=UP throughout); 10000 steps.
+      Y: 0→100 monotonically (DIR=UP throughout); 10000 steps.
+      Net displacement = 100 units per axis = 10000 steps per axis regardless
+      of intermediate chord waypoints — chord_tol affects shape, not count.
+
+    Checks:
+      - X and Y step counts ≈ 10000 ± 5.
+      - First rising edges on both axes within 100 µs (simultaneous seg-1 start).
+      - Last rising edges on both axes within 20 ms (simultaneous last-seg end).
+      - ≥14 inter-segment gaps in each pulse train (15 segments → 14 boundaries).
+      - No gap > 3 s (no stalls).
+      - Pico stdout x_pos ≈ 100.00, y_pos ≈ 100.00 (position tracking correct).
+      - Saleae counts match PulseCounter values from Pico stdout.
+    """
+    channels = [
+        hil_config.STEP_CHANNEL, hil_config.DIR_CHANNEL,
+        hil_config.STEP_CHANNEL_2, hil_config.DIR_CHANNEL_2,
+    ]
+    tmpdir, stdout = run_capture(manager, 'hil_arc.py', channels)
+    _force_step_low(hil_config.STEP_PIN_2)
+
+    edges1 = parse_rising_edges(tmpdir / 'digital.csv', hil_config.STEP_CHANNEL)
+    edges2 = parse_rising_edges(tmpdir / 'digital.csv', hil_config.STEP_CHANNEL_2)
+
+    # 1. Step counts: net displacement = 100 units × 100 steps/unit = 10000.
+    assert abs(len(edges1) - 10000) <= 5, \
+        f'Axis X: expected ~10000 steps, got {len(edges1)}'
+    assert abs(len(edges2) - 10000) <= 5, \
+        f'Axis Y: expected ~10000 steps, got {len(edges2)}'
+
+    # 2. Simultaneous start of first segment.
+    start_skew_us = abs(edges1[0] - edges2[0]) * 1e6
+    assert start_skew_us < 100, \
+        f'Start skew {start_skew_us:.1f} µs > 100 µs — axes not started simultaneously?'
+
+    # 3. Simultaneous finish of last segment.
+    end_skew_ms = abs(edges1[-1] - edges2[-1]) * 1e3
+    assert end_skew_ms < 80, \
+        f'End skew {end_skew_ms:.1f} ms > 80 ms — last segment not finishing together?'
+
+    # 4. Segment boundaries: ≥14 large gaps (15 segments → 14 internal boundaries).
+    def _count_large_gaps(edges, ratio=5.0):
+        if len(edges) < 14:
+            return 0
+        gaps = [edges[i + 1] - edges[i] for i in range(len(edges) - 1)]
+        median_gap = sorted(gaps)[len(gaps) // 2]
+        return sum(1 for g in gaps if g > ratio * median_gap)
+
+    gaps1 = _count_large_gaps(edges1)
+    gaps2 = _count_large_gaps(edges2)
+    assert gaps1 >= 14, f'Axis X: expected ≥14 inter-segment gaps, found {gaps1}'
+    assert gaps2 >= 14, f'Axis Y: expected ≥14 inter-segment gaps, found {gaps2}'
+
+    # 5. No stall.
+    max_gap1 = max(edges1[i + 1] - edges1[i] for i in range(len(edges1) - 1))
+    max_gap2 = max(edges2[i + 1] - edges2[i] for i in range(len(edges2) - 1))
+    assert max_gap1 < 3.0, f'Axis X: stall detected (max gap {max_gap1:.2f} s)'
+    assert max_gap2 < 3.0, f'Axis Y: stall detected (max gap {max_gap2:.2f} s)'
+
+    # 6 & 7. Cross-check Pico stdout.
+    # line: "done x_pos=100.00 y_pos=100.00 x_steps=10000 y_steps=10000"
+    pico_x_steps = pico_y_steps = None
+    pico_x_pos = pico_y_pos = None
+    for line in stdout.splitlines():
+        if line.startswith('done x_pos='):
+            parts = line.split()
+            pico_x_pos   = float(parts[1].split('=')[1])
+            pico_y_pos   = float(parts[2].split('=')[1])
+            pico_x_steps = int(parts[3].split('=')[1])
+            pico_y_steps = int(parts[4].split('=')[1])
+            break
+    assert pico_x_steps is not None, \
+        f'Pico did not print "done x_pos=..."\nstdout: {stdout}'
+    assert abs(pico_x_pos - 100.0) < 0.5, \
+        f'X final pos {pico_x_pos:.2f} not near 100.00'
+    assert abs(pico_y_pos - 100.0) < 0.5, \
+        f'Y final pos {pico_y_pos:.2f} not near 100.00'
+    assert len(edges1) == pico_x_steps, \
+        f'Axis X: Saleae ({len(edges1)}) ≠ PulseCounter ({pico_x_steps})'
+    assert len(edges2) == pico_y_steps, \
+        f'Axis Y: Saleae ({len(edges2)}) ≠ PulseCounter ({pico_y_steps})'
+
+    print(f'  PASS  test_arc_quarter_circle  '
+          f'(start skew {start_skew_us:.1f} µs, end skew {end_skew_ms:.1f} ms, '
+          f'{len(edges1)}/{len(edges2)} steps, {gaps1}/{gaps2} seg-gaps)')
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -474,6 +567,7 @@ TESTS = [
     test_replan_profile,
     test_stop_restart,
     test_multiaxis_sync,
+    test_arc_quarter_circle,
 ]
 
 
