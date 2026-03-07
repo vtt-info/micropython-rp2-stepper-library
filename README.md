@@ -51,10 +51,11 @@ Library files are in `smartstepper/` (installed as a package on the Pico):
 
 | File | Description |
 | --- | --- |
-| `smartstepper/__init__.py` | Package entry point; re-exports `SmartStepper`, `SmartStepperError`, `Axis`, `AxisError`, `MultiAxis` |
+| `smartstepper/__init__.py` | Package entry point; re-exports `SmartStepper`, `SmartStepperError`, `Axis`, `AxisError`, `MultiAxis`, `Arc`, `ArcError` |
 | `smartstepper/smartStepper.py` | High-level `SmartStepper` class |
 | `smartstepper/axis.py` | `Axis` wrapper with hard speed/acceleration limits; supports deferred DMA start |
 | `smartstepper/multiaxis.py` | `MultiAxis` synchronized multi-axis planner |
+| `smartstepper/arc.py` | `Arc` 2-axis circular arc motion (chord linearization; G02/G03 compatible) |
 | `smartstepper/homing.py` | Async homing routine (three-phase, handles pre-asserted sensor) |
 | `smartstepper/pulseGenerator.py` | PIO + DMA pulse generator (internal) |
 | `smartstepper/pulseCounter.py` | PIO-based pulse counter for position tracking (internal) |
@@ -257,6 +258,50 @@ ramps finish together. The move is then started with a single write to
 the RP2040/RP2350 `DMA_MULTI_CHAN_TRIGGER` register — a hardware guarantee
 of simultaneous start within the same AHB bus cycle.
 
+### Circular arc motion (G02/G03)
+
+`Arc` linearizes a circular arc into chord segments and executes each segment
+as a synchronized `MultiAxis.move()`. The chord tolerance controls the
+maximum deviation between the ideal arc and the straight-line chords.
+
+```python
+import asyncio
+from smartstepper import SmartStepper, Axis, Arc
+
+stepper_x = SmartStepper(stepPin=2, dirPin=3, enablePin=4)
+stepper_x.stepsPerUnit = 100
+stepper_x.minSpeed = 2
+stepper_x.maxSpeed = 20
+stepper_x.acceleration = 10
+
+stepper_y = SmartStepper(stepPin=5, dirPin=6, enablePin=7)
+stepper_y.stepsPerUnit = 100
+stepper_y.minSpeed = 2
+stepper_y.maxSpeed = 20
+stepper_y.acceleration = 10
+
+x = Axis(stepper_x, hard_max_speed=20, hard_max_accel=10)
+y = Axis(stepper_y, hard_max_speed=20, hard_max_accel=10)
+
+arc = Arc(x, y)
+
+async def main():
+    # Quarter-circle CCW (G03) from (0, 0) to (0, 100).
+    # Center offset i=-0, j=0 => center=(0, 0).
+    # Same as G03 X0 Y100 I0 J0 (starting at X100 Y0).
+    x.position = 100
+    y.position = 0
+    await arc.move(0, 100, i=-100, j=0, direction='ccw', chord_tol=0.1)
+
+asyncio.run(main())
+```
+
+`direction='ccw'` corresponds to G03; `direction='cw'` to G02. The `i` and
+`j` parameters are the center offset from the *current* axis position (same
+convention as G-code I/J). `chord_tol` is the maximum allowed deviation
+between the chord and the arc (in user units); smaller values produce more
+segments and a smoother path.
+
 You can also use `Axis` standalone with a deferred start:
 
 ```python
@@ -376,7 +421,18 @@ asyncio.run(main())
 `activeState=1` for active-high sensors (pull-down or open-collector with
 external pull-up to logic level). `timeout=None` disables the timeout.
 `minSpeed` and `maxSpeed` are saved and restored after homing completes
-or times out.
+or times out. `HomingError` is raised on timeout; import it from
+`smartstepper.homing`:
+
+```python
+from smartstepper.homing import HomingError
+
+async def main():
+    try:
+        await homing.home(stepper, sensor, timeout=10.0)
+    except HomingError as e:
+        print("Homing failed:", e)
+```
 
 ## Acceleration curves
 
@@ -501,6 +557,101 @@ MultiAxis(axes)
 3. Call `axis.prepare_move(target, accel_time=t_common)` for each axis.
 4. Write a DMA channel bitmask to `DMA_MULTI_CHAN_TRIGGER` — a single AHB
    write that starts all channels in the same bus cycle.
+
+### Arc
+
+```python
+Arc(x_axis, y_axis)
+```
+
+`x_axis` and `y_axis` are `Axis` objects. `ArcError` is raised if the arc
+radius is zero or `chord_tol` is too small relative to the radius.
+
+| Method | Description |
+| --- | --- |
+| `async move(x_end, y_end, i=0, j=0, direction='ccw', chord_tol=None, segment_min_speed=None)` | Execute arc from current position; awaits each chord segment |
+| `async wait_done()` | Async wait until the current chord segment completes |
+| `stop(emergency=False)` | Stop all axes |
+| `chord_segments(x_end, y_end, i=0, j=0, direction='ccw', chord_tol=None)` | Return list of `(x, y)` waypoints without moving |
+
+`move()` parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `x_end, y_end` | Arc endpoint in user units |
+| `i, j` | Center offset from current position (G-code I, J convention) |
+| `direction` | `'ccw'` (G03, default) or `'cw'` (G02) |
+| `chord_tol` | Max chord-to-arc deviation in user units (default: `Arc.DEFAULT_CHORD_TOL = 0.1`) |
+| `segment_min_speed` | `minSpeed` used during arc segments; defaults to ¼ of the axes' `minSpeed` |
+
+## Tools
+
+Host-side Python scripts in `tools/` for visualizing motion profiles and
+captured signals. Both require `matplotlib` (`pip install matplotlib`).
+
+### tools/plot_profiles.py
+
+Simulates the SmartStepper motion planner in standard Python (no hardware
+required) and plots speed, position, acceleration, and jerk vs. time for
+all four acceleration curves side-by-side.
+
+```sh
+python tools/plot_profiles.py [options]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--distance F` | `100` | Move distance in units |
+| `--min-speed F` | `5` | Min speed in units/s |
+| `--max-speed F` | `50` | Max speed in units/s |
+| `--acceleration F` | `200` | Acceleration in units/s² |
+| `--steps-per-unit F` | `96` | Steps per unit |
+| `--triangular` | off | Triangular profile (no constant-velocity phase) |
+| `--accel-time F` | — | Fixed acceleration phase duration in seconds |
+| `--output FILE` | `profiles.png` | Save figure to FILE |
+| `--show` | off | Display interactively instead of saving |
+
+`--triangular` and `--accel-time` are mutually exclusive.
+
+### tools/plot_motion.py
+
+Reads a `digital.csv` exported by the HIL test suite (via Saleae Logic 2)
+and reconstructs each axis's position over time. Produces two plots: the
+X–Y spatial trajectory and each axis's position vs. time. Optionally
+overlays an ideal arc for radial error analysis.
+
+```sh
+python tools/plot_motion.py <capture_dir_or_csv> [options]
+```
+
+`<capture_dir_or_csv>` is either a directory containing `digital.csv` (as
+produced by `run_capture()` in `test_hil.py`) or the path to the CSV file
+itself.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--steps-per-unit F` | `96` | Steps per unit for both axes |
+| `--x-init F` | `0` | Initial X position in units |
+| `--y-init F` | `0` | Initial Y position in units |
+| `--step-ch N` | `0` | Saleae channel for axis-1 STEP |
+| `--dir-ch N` | `1` | Saleae channel for axis-1 DIR |
+| `--step-ch2 N` | `2` | Saleae channel for axis-2 STEP |
+| `--dir-ch2 N` | `3` | Saleae channel for axis-2 DIR |
+| `--dir-high-positive` | on | DIR=1 → positive direction |
+| `--dir-high-negative` | off | DIR=1 → negative direction |
+| `--arc-cx F` | — | Arc center X for ideal arc overlay |
+| `--arc-cy F` | — | Arc center Y for ideal arc overlay |
+| `--arc-r F` | — | Arc radius for ideal arc overlay |
+| `--output FILE` | `motion.png` | Save figure to FILE |
+| `--show` | off | Display interactively instead of saving |
+
+Example — visualize an arc capture with ideal arc overlay:
+
+```sh
+python tools/plot_motion.py tests/captures/hil_arc/ \
+    --steps-per-unit 100 --x-init 100 --y-init 0 \
+    --arc-cx 0 --arc-cy 0 --arc-r 100 --show
+```
 
 ## Hardware notes
 
