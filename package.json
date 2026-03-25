@@ -7,7 +7,7 @@
         ["smartstepper/multiaxis.py",       "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/multiaxis.py"],
         ["smartstepper/pulseGenerator.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/pulseGenerator.py"],
         ["smartstepper/pulseCounter.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/pulseCounter.py"],
-        ["smartstepper/smartStepper.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/smartStepper.py"],
+        ["smartstepper/smartStepper.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/smartStepper.py"]
     ],
     "deps": []
 }
