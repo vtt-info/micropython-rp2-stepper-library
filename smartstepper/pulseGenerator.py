@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 
-""" Pulse generator.
-"""
+"""Pulse generator."""
 
 import array
 import rp2
 import machine
+from micropython import const
 
-SM_FREQ = 10_000_000  # Hz
+SM_FREQ = const(10_000_000)  # Hz
+
+# PIO0 register addresses for direct hardware manipulation.
+_PIO0_XOR = const(0x50201000)  # XOR alias for atomic bit toggle
+_SHIFTCTRL_OFF = const(0x0D0)  # SM0_SHIFTCTRL offset; +_SM_STRIDE per SM
+_SM_STRIDE = const(0x18)
+_FJOIN_RX_BIT = const(1 << 30)
 
 # PIO0 TX DREQ indices for rp2.DMA.pack_ctrl(treq_sel=...)
 # Values 0-3 are identical on RP2040 and RP2350.
@@ -15,21 +21,21 @@ _PIO0_TX_DREQ = (0, 1, 2, 3)
 
 # PIO0 TX FIFO addresses (PIO0 base 0x50200000 + TXFn byte offset)
 # Identical on RP2040 and RP2350.
-_PIO0_TXF_ADDR = (0x50200010, 0x50200014, 0x50200018, 0x5020001c)
+_PIO0_TXF_ADDR = (0x50200010, 0x50200014, 0x50200018, 0x5020001C)
 
 
 class PulseGenerator:
-    """ Pulses generator
+    """Pulses generator
 
     Uses State Machines 0-3 on PIO0. Each instance claims the next
     available SM (up to 4 total). The DMA channel is claimed from the
     MicroPython pool independently of the SM number.
     """
+
     _num = 0 - 1
 
     def __init__(self, pin):
-        """
-        """
+        """ """
         PulseGenerator._num += 1
         if PulseGenerator._num > 3:
             raise RuntimeError("Too many PulseGenerator instances")
@@ -42,7 +48,9 @@ class PulseGenerator:
         self._dma = rp2.DMA()
         self._dma.active(False)
 
-        self._sm = rp2.StateMachine(self._smNum, self._pioCode, freq=SM_FREQ, sideset_base=pin)
+        self._sm = rp2.StateMachine(
+            self._smNum, self._pioCode, freq=SM_FREQ, sideset_base=pin
+        )
         self._sm.irq(self._pulseLengthISR)
         self._sm.active(1)
 
@@ -123,8 +131,7 @@ class PulseGenerator:
 
     @property
     def freq(self):
-        """ Return current frequency.
-        """
+        """Return current frequency."""
         try:
             freq = round(SM_FREQ / self._pulseLength / 2)
         except ZeroDivisionError:
@@ -133,21 +140,21 @@ class PulseGenerator:
         return freq
 
     def _buildSequence(self, points):
-        """ Build a DMA-ready word array from (freq, nbPulses) tuples.
+        """Build a DMA-ready word array from (freq, nbPulses) tuples.
         Appends a 0 pulseLength sentinel so the PIO knows when the sequence ends.
         """
-        sequence = array.array('I', bytearray(len(points)*8 + 8))
+        sequence = array.array("I", bytearray(len(points) * 8 + 8))
         i = 0
         for freq, nbPulses in points:
             if nbPulses < 1:  # guard: 0-pulse segments wrap to 0xFFFFFFFF → 2³² steps
                 continue
             sequence[i] = round(SM_FREQ / freq / 2)
-            sequence[i+1] = nbPulses - 1
+            sequence[i + 1] = nbPulses - 1
             i += 2
         return sequence
 
     def _configureDMA(self, sequence):
-        """ Configure DMA for the given sequence array without triggering.
+        """Configure DMA for the given sequence array without triggering.
 
         Saves sequence as self._sequence to prevent GC from reclaiming it
         while DMA is active. The array is passed directly as the read source;
@@ -155,7 +162,7 @@ class PulseGenerator:
         """
         self._sequence = sequence  # keep alive for DMA
         ctrl = self._dma.pack_ctrl(
-            size=2,         # word transfers
+            size=2,  # word transfers
             inc_read=True,
             inc_write=False,
             treq_sel=_PIO0_TX_DREQ[self._smNum],
@@ -169,22 +176,22 @@ class PulseGenerator:
         )
 
     def _triggerDMA(self):
-        """ Fire a previously configured DMA channel. """
+        """Fire a previously configured DMA channel."""
         self._dma.active(True)
 
     def _startDMA(self, sequence):
-        """ Configure and immediately trigger DMA for the given sequence array. """
+        """Configure and immediately trigger DMA for the given sequence array."""
         self._configureDMA(sequence)
         self._triggerDMA()
 
     @property
     def dma_channel(self):
-        """ Return the integer DMA channel number (0–11). """
+        """Return the integer DMA channel number (0–11)."""
         return self._dma.channel
 
     @staticmethod
     def trigger_channels(bitmask):
-        """ Simultaneously trigger multiple DMA channels.
+        """Simultaneously trigger multiple DMA channels.
 
         bitmask is a bitfield where bit N corresponds to DMA channel N.
         Uses the RP2040/RP2350 DMA_MULTI_CHAN_TRIGGER register (single AHB
@@ -193,7 +200,7 @@ class PulseGenerator:
         machine.mem32[0x50000430] = bitmask
 
     def prepare(self, points):
-        """ Configure DMA for the given points without triggering.
+        """Configure DMA for the given points without triggering.
 
         Stops any prior DMA and programs the new sequence so that a subsequent
         call to _triggerDMA() (or trigger_channels()) will start it instantly.
@@ -214,7 +221,7 @@ class PulseGenerator:
         self._startDMA(self._buildSequence(points))
 
     def update(self, points):
-        """ Replace the remaining motion profile without stopping the motor.
+        """Replace the remaining motion profile without stopping the motor.
 
         Non-blocking. Aborts the current DMA transfer and immediately starts a
         new one from the rebuilt sequence. Any data already in the PIO TX FIFO
@@ -232,7 +239,7 @@ class PulseGenerator:
         self._startDMA(self._buildSequence(points))
 
     def interrupt_with(self, points):
-        """ Interrupt the current segment and immediately start a new profile.
+        """Interrupt the current segment and immediately start a new profile.
 
         Zeroes the PIO Y register via sm.exec(), causing the current segment to
         end after the current half-period (at most 1/freq seconds). The new DMA
@@ -250,22 +257,32 @@ class PulseGenerator:
         self._startDMA(self._buildSequence(points))
 
     def stop(self):
+        """Stop pulse generation immediately.
+
+        Freezes the state machine, clears both FIFOs (using the pico-sdk
+        pio_sm_clear_fifos pattern: toggle SHIFTCTRL.FJOIN_RX twice), resets
+        the SM program counter, and re-enables so it blocks at instruction 0
+        (pull(block).side(0)) with the step pin LOW.
+
+        Total time ~50 us vs ~80 ms for the old sm.exec()-string approach.
         """
-        """
-        self._dma.active(False)  # abort DMA
+        self._dma.active(False)  # 1. Stop DMA feeding FIFO
 
-        self._sm.exec("mov(y, null)")    # Stop steps loop
-        self._sm.exec("mov(y, null)")    # Stop steps loop
-        self._sm.exec("mov(y, null)")    # Stop steps loop
-        self._sm.exec("mov(y, null)")    # Stop steps loop
+        self._sm.active(0)  # 2. Freeze SM — no more pulses
 
-        self._sm.exec("nop().side(0)")   # ensure pulse is low
+        # 3. Clear both FIFOs (toggle FJOIN_RX twice, per pico-sdk)
+        xor_addr = _PIO0_XOR + _SHIFTCTRL_OFF + self._smNum * _SM_STRIDE
+        machine.mem32[xor_addr] = _FJOIN_RX_BIT
+        machine.mem32[xor_addr] = _FJOIN_RX_BIT
 
-        self._pulseLength = 0  # needed?
+        self._sm.restart()  # 4. Reset PC to wrap_target (instr 0)
 
+        self._sm.active(1)  # 5. Re-enable: pull(block).side(0)
+        #    → pin LOW, blocks on empty FIFO
+
+        self._pulseLength = 0  # 6. Mark as not moving
 
     @property
     def dma_count(self):
-        """ Return the number of DMA transfers currently in progress.
-        """
+        """Return the number of DMA transfers currently in progress."""
         return self._dma.count

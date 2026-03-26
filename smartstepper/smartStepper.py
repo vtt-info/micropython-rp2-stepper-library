@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-""" Stepper control.
+"""Stepper control.
 
 TODO:
     x update jog routine
@@ -31,16 +31,16 @@ NB_ACCEL_PTS = 100
 
 
 class SmartStepperError(Exception):
-    """ SmartStepperError class
-    """
+    """SmartStepperError class"""
+
     pass
 
 
 class SmartStepper:
-    """ SmartStepper class
-    """
-    def __init__(self, stepPin, dirPin, enablePin=None, accelCurve='smooth2'):
-        """ Init SmartStepper object
+    """SmartStepper class"""
+
+    def __init__(self, stepPin, dirPin, enablePin=None, accelCurve="smooth2"):
+        """Init SmartStepper object
 
         accelCurve can be in ('linear', smooth1', 'smooth2', 'sine')
         """
@@ -58,16 +58,16 @@ class SmartStepper:
         if self._enablePin is not None:
             self._enablePin.high()  # active-low: start disabled
 
-        self._stepsPerUnit = 1    # steps per unit
-        self._minSpeed = 10       # minimum speed, in units per second
-        self._maxSpeed = 100      # maximum speed, in units per second
+        self._stepsPerUnit = 1  # steps per unit
+        self._minSpeed = 10  # minimum speed, in units per second
+        self._maxSpeed = 100  # maximum speed, in units per second
         self._acceleration = 100  # acceleration, in units per second square
-        self._reverse = False     # reverse dirPin level
+        self._reverse = False  # reverse dirPin level
 
-        self._target = 0          # target position, in units
-        self._direction = None    # current direction
-        self._jogging = False     # True when in jog mode (no fixed target)
-        self._moveDeadline = None # ticks_ms deadline for timeout, or None
+        self._target = 0  # target position, in units
+        self._direction = None  # current direction
+        self._jogging = False  # True when in jog mode (no fixed target)
+        self._moveDeadline = None  # ticks_ms deadline for timeout, or None
 
         self._accelTable = []
         self._initAccelTable(accelCurve)
@@ -78,34 +78,32 @@ class SmartStepper:
     def __repr__(self):
         return f"SmartStepper(target={self._target}, direction={self._direction}, speed={self.speed}, jog={self._jogging})"
 
-    def _initAccelTable(self, accelCurve='smooth2'):
-        """ Init acceleration table
-        """
-        for i in range(NB_ACCEL_PTS+1):
+    def _initAccelTable(self, accelCurve="smooth2"):
+        """Init acceleration table"""
+        for i in range(NB_ACCEL_PTS + 1):
             t = i / NB_ACCEL_PTS
             y = self._accel(t, accelCurve)
             self._accelTable.append(y)
 
-    def _accel(self, x, accelCurve='smooth2'):
-        """ Compute acceleration
-        """
-        if accelCurve == 'linear':
+    def _accel(self, x, accelCurve="smooth2"):
+        """Compute acceleration"""
+        if accelCurve == "linear":
             return x
 
-        elif accelCurve == 'smooth1':
+        elif accelCurve == "smooth1":
             return x * x * (3 - 2 * x)
 
-        elif accelCurve == 'smooth2':
+        elif accelCurve == "smooth2":
             return x * x * x * (x * (x * 6 - 15) + 10)
 
-        elif accelCurve == 'sine':
+        elif accelCurve == "sine":
             return (math.cos((x + 1) * math.pi) + 1) / 2
 
         else:
             raise SmartStepperError(f"Unknown '{accelCurve}' acceleration curve")
 
     def _accelPoints(self, fromSpeed, toSpeed, accel=None):
-        """ Compute acceleration (or deceleration) points from fromSpeed to toSpeed.
+        """Compute acceleration (or deceleration) points from fromSpeed to toSpeed.
 
         For deceleration (fromSpeed > toSpeed), generates the reversed acceleration
         profile, which is valid because the smoothstep curves are point-symmetric.
@@ -156,7 +154,7 @@ class SmartStepper:
 
     @micropython.native
     def _buildProfile(self, fromSpeed, remaining, triangular=False, forced_peak=None):
-        """ Build a complete motion profile from fromSpeed over remaining distance.
+        """Build a complete motion profile from fromSpeed over remaining distance.
 
         Computes the achievable peak speed given the distance, then produces
         accel → [const speed] → decel segments.
@@ -178,7 +176,7 @@ class SmartStepper:
         if forced_peak is not None:
             peakSpeed = min(forced_peak, self._maxSpeed)
             accelUpDist = (peakSpeed**2 - fromSpeed**2) / (2 * accel)
-            decelDist   = (peakSpeed**2 - self._minSpeed**2) / (2 * accel)
+            decelDist = (peakSpeed**2 - self._minSpeed**2) / (2 * accel)
             if accelUpDist + decelDist > abs(remaining):
                 peakSpeed = math.sqrt(
                     (abs(remaining) * 2 * accel + fromSpeed**2 + self._minSpeed**2) / 2
@@ -197,7 +195,9 @@ class SmartStepper:
                 # Reduce acceleration so the move stays triangular at maxSpeed.
                 # Solve peak=maxSpeed in the distance formula for accel:
                 #   maxSpeed² = (|remaining|·2·accel_eff + fromSpeed² + minSpeed²) / 2
-                accel = (2 * self._maxSpeed**2 - fromSpeed**2 - self._minSpeed**2) / (2 * abs(remaining))
+                accel = (2 * self._maxSpeed**2 - fromSpeed**2 - self._minSpeed**2) / (
+                    2 * abs(remaining)
+                )
                 peakSpeed = self._maxSpeed
             else:
                 peakSpeed = min(peak, self._maxSpeed)
@@ -210,11 +210,13 @@ class SmartStepper:
 
         # Const speed phase — omitted for triangular moves; present when forced_peak
         # is set (accel_time / MultiAxis) or when the move hits the speed ceiling.
-        if not triangular and (forced_peak is not None or peakSpeed >= self._maxSpeed - 1e-6):
-            rampDist    = abs(peakSpeed**2 - fromSpeed**2) / (2 * accel)
-            decelDist   = (peakSpeed**2 - self._minSpeed**2) / (2 * accel)
-            constDist   = abs(remaining) - rampDist - decelDist
-            constSteps  = round(constDist * self._stepsPerUnit)
+        if not triangular and (
+            forced_peak is not None or peakSpeed >= self._maxSpeed - 1e-6
+        ):
+            rampDist = abs(peakSpeed**2 - fromSpeed**2) / (2 * accel)
+            decelDist = (peakSpeed**2 - self._minSpeed**2) / (2 * accel)
+            constDist = abs(remaining) - rampDist - decelDist
+            constSteps = round(constDist * self._stepsPerUnit)
             if constSteps > 0:
                 points.append((peakSpeed * self._stepsPerUnit, constSteps))
 
@@ -240,12 +242,12 @@ class SmartStepper:
         return sum(n / f for f, n in points)
 
     def _updateDirection(self, direction):
-        """ Update dir pin according to direction.
+        """Update dir pin according to direction.
 
         The PulseCounter reads the dir pin directly via hardware, so no
         separate direction update is needed there.
         """
-        if direction == 'up':
+        if direction == "up":
             self._directionPin.high()
         else:
             self._directionPin.low()
@@ -256,7 +258,7 @@ class SmartStepper:
             self._directionPin.toggle()
 
     def enable(self):
-        """ Enable the stepper driver (active-low enable pin).
+        """Enable the stepper driver (active-low enable pin).
 
         No-op if no enable pin was configured.
         """
@@ -264,7 +266,7 @@ class SmartStepper:
             self._enablePin.low()
 
     def disable(self):
-        """ Disable the stepper driver (active-low enable pin).
+        """Disable the stepper driver (active-low enable pin).
 
         No-op if no enable pin was configured.
         """
@@ -273,7 +275,7 @@ class SmartStepper:
 
     @property
     def minSpeed(self):
-        """ Get the min speed
+        """Get the min speed
 
         minSpeed is in units per second.
         """
@@ -281,7 +283,7 @@ class SmartStepper:
 
     @minSpeed.setter
     def minSpeed(self, value):
-        """ Set the min speed
+        """Set the min speed
 
         minSpeed is in units per second.
         Can be changed while moving; triggers a motion replan.
@@ -298,7 +300,7 @@ class SmartStepper:
 
     @property
     def maxSpeed(self):
-        """ Get the max speed
+        """Get the max speed
 
         maxSpeed is in units per second.
         """
@@ -306,7 +308,7 @@ class SmartStepper:
 
     @maxSpeed.setter
     def maxSpeed(self, value):
-        """ Set the max speed
+        """Set the max speed
 
         maxSpeed is in units per second.
         Can be changed while moving; triggers a motion replan.
@@ -323,7 +325,7 @@ class SmartStepper:
 
     @property
     def speed(self):
-        """ Get the current speed
+        """Get the current speed
 
         speed is in units per second.
         """
@@ -331,13 +333,12 @@ class SmartStepper:
 
     @property
     def direction(self):
-        """ Get the current direction
-        """
+        """Get the current direction"""
         return self._direction
 
     @property
     def acceleration(self):
-        """ Get the acceleration
+        """Get the acceleration
 
         acceleration is in units per second square.
         """
@@ -345,7 +346,7 @@ class SmartStepper:
 
     @acceleration.setter
     def acceleration(self, value):
-        """ Set the acceleration
+        """Set the acceleration
 
         acceleration is in units per second square.
         Can be changed while moving; triggers a motion replan.
@@ -356,14 +357,12 @@ class SmartStepper:
 
     @property
     def stepsPerUnit(self):
-        """ Get the number of steps per unit
-        """
+        """Get the number of steps per unit"""
         return self._stepsPerUnit
 
     @stepsPerUnit.setter
     def stepsPerUnit(self, value):
-        """ Set the number of steps per unit
-        """
+        """Set the number of steps per unit"""
         if self.moving:
             raise SmartStepperError("Can't change 'steps per unit' while moving")
 
@@ -371,14 +370,12 @@ class SmartStepper:
 
     @property
     def reverse(self):
-        """ get the reverse flag
-        """
+        """get the reverse flag"""
         return self._reverse
 
     @reverse.setter
     def reverse(self, value):
-        """ Set the reverse flag
-        """
+        """Set the reverse flag"""
         if self.moving:
             raise SmartStepperError("Can't change 'reverse' flag while moving")
 
@@ -386,7 +383,7 @@ class SmartStepper:
 
     @property
     def target(self):
-        """ get the target
+        """get the target
 
         Target is in units.
         """
@@ -394,7 +391,7 @@ class SmartStepper:
 
     @property
     def position(self):
-        """ Get the current position
+        """Get the current position
 
         Position is in units.
         """
@@ -402,7 +399,7 @@ class SmartStepper:
 
     @position.setter
     def position(self, value):
-        """ Set the current position
+        """Set the current position
 
         Can be used to reset the position.
         Position is in units.
@@ -414,18 +411,17 @@ class SmartStepper:
 
     @property
     def moving(self):
-        """ Check if moving
-        """
+        """Check if moving"""
         return self._pulseGenerator.moving
 
-    def jog(self, maxSpeed=None, direction='up'):
-        """ Jog at given speed
+    def jog(self, maxSpeed=None, direction="up"):
+        """Jog at given speed
 
         maxSpeed is in units per second.
         Handle acceleration.
         Non blocking.
         """
-#         print("\nTRACE::jog()")
+        #         print("\nTRACE::jog()")
 
         if self.moving:
             raise SmartStepperError("Can't 'jog' while moving")
@@ -446,15 +442,19 @@ class SmartStepper:
         points.extend(self._accelPoints(self._minSpeed, maxSpeed))
 
         # Constant speed
-#         print("\nDEBUG::Constant speed phase:")
+        #         print("\nDEBUG::Constant speed phase:")
         maxDist = 60 * maxSpeed  # distance for 1min run
-        points.append((maxSpeed * self._stepsPerUnit, round(maxDist * self._stepsPerUnit)))
+        points.append(
+            (maxSpeed * self._stepsPerUnit, round(maxDist * self._stepsPerUnit))
+        )
 
         # Start the generator
         self._pulseGenerator.start(points)
 
-    def moveTo(self, target, relative=False, timeout=None, triangular=False, accel_time=None):
-        """ Move to target
+    def moveTo(
+        self, target, relative=False, timeout=None, triangular=False, accel_time=None
+    ):
+        """Move to target
 
         target is in units.
         timeout is in seconds (None = no timeout).
@@ -467,7 +467,7 @@ class SmartStepper:
         Handle acceleration.
         Non blocking.
         """
-#         print("\nTRACE::moveTo()")
+        #         print("\nTRACE::moveTo()")
 
         if self.moving:
             raise SmartStepperError("Can't 'moveto' while moving")
@@ -487,10 +487,10 @@ class SmartStepper:
 
         # Compute direction
         if self._target > self.position:
-            self._updateDirection('up')
+            self._updateDirection("up")
 
         else:
-            self._updateDirection('down')
+            self._updateDirection("down")
 
         remaining = abs(self._target - self.position)
 
@@ -499,17 +499,26 @@ class SmartStepper:
             forced_peak = self._minSpeed + self._acceleration * accel_time
             forced_peak = min(forced_peak, self._maxSpeed)
             if forced_peak < self._minSpeed:
-                raise SmartStepperError("accel_time too short: peak speed below minSpeed")
+                raise SmartStepperError(
+                    "accel_time too short: peak speed below minSpeed"
+                )
 
-        points = self._buildProfile(self._minSpeed, remaining,
-                                    triangular=triangular, forced_peak=forced_peak)
+        points = self._buildProfile(
+            self._minSpeed, remaining, triangular=triangular, forced_peak=forced_peak
+        )
 
         # Start the generator
         self._pulseGenerator.start(points)
 
-    def _prepare_move(self, target, relative=False, accel_time=None, triangular=False,
-                      forced_peak=None):
-        """ Set up a move and configure DMA without triggering it.
+    def _prepare_move(
+        self,
+        target,
+        relative=False,
+        accel_time=None,
+        triangular=False,
+        forced_peak=None,
+    ):
+        """Set up a move and configure DMA without triggering it.
 
         Identical to moveTo() except the pulse generator is primed via
         prepare() rather than start(). Call pulseGenerator._triggerDMA() (or
@@ -533,9 +542,9 @@ class SmartStepper:
             self._target = self.position + target
 
         if self._target > self.position:
-            self._updateDirection('up')
+            self._updateDirection("up")
         else:
-            self._updateDirection('down')
+            self._updateDirection("down")
 
         remaining = abs(self._target - self.position)
 
@@ -543,21 +552,24 @@ class SmartStepper:
             forced_peak = self._minSpeed + self._acceleration * accel_time
             forced_peak = min(forced_peak, self._maxSpeed)
             if forced_peak < self._minSpeed:
-                raise SmartStepperError("accel_time too short: peak speed below minSpeed")
+                raise SmartStepperError(
+                    "accel_time too short: peak speed below minSpeed"
+                )
 
-        points = self._buildProfile(self._minSpeed, remaining,
-                                    triangular=triangular, forced_peak=forced_peak)
+        points = self._buildProfile(
+            self._minSpeed, remaining, triangular=triangular, forced_peak=forced_peak
+        )
         self._pulseGenerator.prepare(points)
         return self._pulseGenerator.dma_channel
 
     def stop(self, emergency=False):
-        """ Stop the motor.
+        """Stop the motor.
 
         With emergency=False (default), decelerates smoothly from the current
         speed to minSpeed, then halts. Non-blocking.
         With emergency=True, stops immediately (hard stop, may lose steps).
         """
-#         print("\nTRACE::stop()")
+        #         print("\nTRACE::stop()")
 
         if not self.moving:
             raise SmartStepperError("Can't 'stop' while not moving")
@@ -575,32 +587,33 @@ class SmartStepper:
                 self._pulseGenerator.stop()
 
     def _replan(self):
-        """ Recompute and update the motion profile from the current state.
+        """Recompute and update the motion profile from the current state.
 
         Called automatically when speed or acceleration is changed mid-move.
-        Non-blocking: rebuilds the profile and hands it to the pulse generator,
-        which performs a fast DMA abort+restart (~10µs).
+        Captures current speed, performs a fast stop (~50 us) to clear the PIO
+        FIFO, then rebuilds the profile from the accurate pulse-counter position
+        and restarts.  Total gap is ~35 ms (dominated by _buildProfile + start).
         No-op during jog (no fixed target to replan toward).
         """
         if self._jogging:
             return
 
-        currentSpeed = self.speed
-        remaining = self._target - self.position
+        currentSpeed = self.speed  # capture BEFORE stop clears _pulseLength
+
+        self._pulseGenerator.stop()  # fast stop: freeze SM + clear FIFO
+
+        remaining = self._target - self.position  # accurate from pulse counter
 
         if abs(remaining) < 1.0 / self._stepsPerUnit:
-            self._pulseGenerator.stop()  # less than 1 step left: hard stop is fine
-            return
+            return  # already at target; stop already done
 
         points = self._buildProfile(currentSpeed, remaining)
         if points:
-            self._pulseGenerator.update(points)
-        else:
-            self._pulseGenerator.stop()  # already at or past target: hard stop
-        
+            self._pulseGenerator.start(points)
+
     @property
     def timedOut(self):
-        """ True if the current move has exceeded its timeout.
+        """True if the current move has exceeded its timeout.
 
         Always False when no timeout was set.
         """
@@ -609,7 +622,7 @@ class SmartStepper:
         return time.ticks_diff(time.ticks_ms(), self._moveDeadline) >= 0
 
     def waitEndOfMove(self):
-        """ Block until the move completes or times out.
+        """Block until the move completes or times out.
 
         Raises SmartStepperError if a timeout was set and expires.
         """
