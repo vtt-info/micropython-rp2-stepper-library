@@ -72,7 +72,7 @@ class SmartStepper:
         self._initAccelTable(accelCurve)
 
         self._pulseGenerator = pulseGenerator.PulseGenerator(stepPin)
-        self._pulseCounter = pulseCounter.PulseCounter(stepPin)
+        self._pulseCounter = pulseCounter.PulseCounter(stepPin, dirPin)
 
     def __repr__(self):
         return f"SmartStepper(target={self._target}, direction={self._direction}, speed={self.speed}, jog={self._jogging})"
@@ -238,15 +238,15 @@ class SmartStepper:
         return sum(n / f for f, n in points)
 
     def _updateDirection(self, direction):
-        """ Update dir pin / pulseCounter according to direction
+        """ Update dir pin according to direction.
+
+        The PulseCounter reads the dir pin directly via hardware, so no
+        separate direction update is needed there.
         """
         if direction == 'up':
             self._directionPin.high()
-            self._pulseCounter.direction = 'up'
-
         else:
             self._directionPin.low()
-            self._pulseCounter.direction = 'down'
 
         self._direction = direction
 

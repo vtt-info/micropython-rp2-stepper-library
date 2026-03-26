@@ -61,3 +61,7 @@ SmartStepper  (smartStepper.py)
 - `minSpeed`, `maxSpeed`, `acceleration` can be changed mid-move and trigger `_replan()`
 - `NB_ACCEL_PTS = 100` controls motion profile resolution (in `smartStepper.py`)
 - PIO0 TX FIFO addresses and DREQ indices are hardcoded for RP2040/RP2350 at `0x50200010`+
+
+## Code format
+- Don't use non-ascii characters unless absolutely necessary.
+- Format Python code using ruff.
