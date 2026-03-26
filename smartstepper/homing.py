@@ -58,7 +58,8 @@ async def home(stepper, sensor,
                 and time.ticks_diff(time.ticks_ms(), deadline) >= 0)
 
     def abort(msg):
-        stepper.stop(emergency=True)
+        if stepper.moving:
+            stepper.stop(emergency=True)
         stepper.minSpeed = savedMinSpeed
         stepper.maxSpeed = savedMaxSpeed
         raise HomingError(msg)
@@ -74,10 +75,11 @@ async def home(stepper, sensor,
         while triggered():
             if timed_out():
                 abort("Homing timed out during initial backoff")
-            await asyncio.sleep_ms(1)
-        stepper.stop()
+            await asyncio.sleep_ms(5)
+        if stepper.moving:
+            stepper.stop()
         while stepper.moving:
-            await asyncio.sleep_ms(1)
+            await asyncio.sleep_ms(5)
 
     # Phase 1: fast approach until sensor asserts
     stepper.maxSpeed = fastSpeed
@@ -85,10 +87,11 @@ async def home(stepper, sensor,
     while not triggered():
         if timed_out():
             abort("Homing timed out during approach")
-        await asyncio.sleep_ms(1)
-    stepper.stop()
+        await asyncio.sleep_ms(5)
+    if stepper.moving:
+        stepper.stop()
     while stepper.moving:
-        await asyncio.sleep_ms(1)
+        await asyncio.sleep_ms(5)
 
     # Phase 2: slow backoff until sensor de-asserts
     stepper.maxSpeed = slowSpeed
@@ -96,8 +99,11 @@ async def home(stepper, sensor,
     while triggered():
         if timed_out():
             abort("Homing timed out during backoff")
-        await asyncio.sleep_ms(1)
-    stepper.stop(emergency=True)   # cut immediately at de-assert edge
+        await asyncio.sleep_ms(5)
+    if stepper.moving:
+        stepper.stop(emergency=True)   # cut immediately at de-assert edge
+    else:
+        stepper._pulseGenerator._sm.exec("nop().side(0)")  # ensure step pin is low
 
     stepper.minSpeed = savedMinSpeed
     stepper.maxSpeed = savedMaxSpeed

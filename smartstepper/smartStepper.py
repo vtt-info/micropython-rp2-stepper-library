@@ -74,6 +74,9 @@ class SmartStepper:
         self._pulseGenerator = pulseGenerator.PulseGenerator(stepPin)
         self._pulseCounter = pulseCounter.PulseCounter(stepPin)
 
+    def __repr__(self):
+        return f"SmartStepper(target={self._target}, direction={self._direction}, speed={self.speed}, jog={self._jogging})"
+
     def _initAccelTable(self, accelCurve='smooth2'):
         """ Init acceleration table
         """
@@ -457,7 +460,7 @@ class SmartStepper:
             immediately decelerates. If the natural peak would exceed maxSpeed,
             acceleration is reduced so the move is triangular at maxSpeed.
         accel_time: duration of the acceleration phase in seconds. The peak speed
-            is fromSpeed + acceleration × accel_time, clamped to maxSpeed. Any
+            is fromSpeed + acceleration * accel_time, clamped to maxSpeed. Any
             remaining distance is covered at constant speed.
         Handle acceleration.
         Non blocking.

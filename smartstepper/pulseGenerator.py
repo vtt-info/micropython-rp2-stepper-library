@@ -104,12 +104,22 @@ class PulseGenerator:
 
     @property
     def moving(self):
-        """True while DMA is actively transferring (i.e. the motor is running).
+        """True while the motor is running.
 
-        Uses the hardware DMA busy bit rather than the ISR-updated _pulseLength,
-        so it is reliable even when MicroPython coalesces soft-IRQ deliveries.
+        DMA finishes writing to the PIO TX FIFO before the PIO has consumed
+        all segments — up to 2 segments can be buffered.  Relying solely on
+        dma.active() would declare the move finished while the motor is still
+        pulsing, causing the next moveTo() to corrupt direction and position.
+
+        _pulseLength is set to 0 by the ISR only when the PIO processes the
+        end-of-sequence sentinel, so it is the true "motion complete" signal.
+        Combining both covers the full timeline:
+          - DMA active: dma.active() is True
+          - DMA done, PIO draining FIFO: _pulseLength is still non-zero
+          - Sentinel consumed: ISR sets _pulseLength = 0 → False
+        After stop(), both are explicitly cleared, so moving returns False.
         """
-        return self._dma.active()
+        return self._dma.active() or self._pulseLength != 0
 
     @property
     def freq(self):

@@ -1,10 +1,10 @@
 {
     "urls": [
         ["smartstepper/__init__.py",     "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/__init__.py"],
-        ["smartstepper/arc.py",     "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/arc.py"],
-        ["smartstepper/axis.py",     "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/axis.py"],
+        ["smartstepper/arc.py",          "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/arc.py"],
+        ["smartstepper/axis.py",         "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/axis.py"],
         ["smartstepper/homing.py",       "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/homing.py"],
-        ["smartstepper/multiaxis.py",       "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/multiaxis.py"],
+        ["smartstepper/multiaxis.py",    "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/multiaxis.py"],
         ["smartstepper/pulseGenerator.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/pulseGenerator.py"],
         ["smartstepper/pulseCounter.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/pulseCounter.py"],
         ["smartstepper/smartStepper.py", "github:bikeNomad/micropython-rp2-smartStepper/smartstepper/smartStepper.py"]
