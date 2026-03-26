@@ -16,7 +16,7 @@ s.maxSpeed = 50      # 4800 steps/s
 s.acceleration = 300
 
 s.moveTo(100)
-time.sleep_ms(1000)  # wait until well into the fast cruise phase
+time.sleep_ms(500)  # wait until well into the fast cruise phase
 s.maxSpeed = 25      # trigger _replan() — motor drops to 2400 steps/s
 s.waitEndOfMove()
 print(f'done steps={s._pulseCounter.value}')
