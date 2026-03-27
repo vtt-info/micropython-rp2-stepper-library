@@ -12,6 +12,7 @@ CPU-independent pulse generation and position counting.
 - Smooth acceleration and deceleration (4 curves: linear, smooth1, smooth2/smootherstep, sine — see [Acceleration curves](#acceleration-curves))
 - Graceful stop with deceleration, or emergency hard stop
 - Dynamic parameter adjustment (speed, acceleration) mid-move with automatic motion replan
+  - **NOTE**: re-plan currently suffers from a ~50ms gap; I'm still thinking about how to do this better.
 - Position tracking via PIO pulse counter
 - Active-low enable pin support (auto-enabled on move start)
 - Move timeout with automatic emergency stop
